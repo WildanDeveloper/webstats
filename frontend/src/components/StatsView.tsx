@@ -6,7 +6,8 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/auth";
 import type {
   Campaign,
-  EventRow,
+  EventDetail,
+  EventOccurrence,
   FunnelStep,
   Goal,
   GoalSummary,
@@ -94,6 +95,7 @@ export default function StatsView(props: {
   period: string;
   from: string;
   to: string;
+  filters: { page?: string; source?: string; country?: string; device?: string; browser?: string; os?: string };
   overview: Overview | null;
   timeseries: TimePoint[];
   pages: Row[];
@@ -102,7 +104,7 @@ export default function StatsView(props: {
   browsers: Row[];
   os: Row[];
   countries: Row[];
-  events: EventRow[];
+  events: EventDetail[];
   world: WorldPoint[];
   campaigns: Campaign[];
   goals: GoalSummary[];
@@ -110,7 +112,7 @@ export default function StatsView(props: {
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { siteId, token, period, from, to } = props;
+  const { siteId, token, period, from, to, filters } = props;
   const [fromD, setFromD] = useState(from);
   const [toD, setToD] = useState(to);
   const [goals, setGoals] = useState(props.goals);
@@ -120,29 +122,118 @@ export default function StatsView(props: {
   const [funnelInput, setFunnelInput] = useState("");
   const [funnel, setFunnel] = useState<FunnelStep[]>([]);
   const [goalMsg, setGoalMsg] = useState("");
+  const [openEvent, setOpenEvent] = useState("");
+  const [occurrences, setOccurrences] = useState<EventOccurrence[]>([]);
+  const [evMsg, setEvMsg] = useState("");
+
+  function baseQ() {
+    const parts: string[] = [];
+    if (from && to) {
+      parts.push(`from=${from}`, `to=${to}`);
+    } else {
+      parts.push(`period=${period}`);
+    }
+    return parts.join("&");
+  }
+
+  function go(patch: Record<string, string>) {
+    const qs = new URLSearchParams();
+    if (from && to) {
+      qs.set("from", from);
+      qs.set("to", to);
+    } else {
+      qs.set("period", period);
+    }
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) qs.set(k, v);
+      else qs.delete(k);
+    }
+    router.push(`${pathname}?${qs.toString()}`);
+  }
+
+  function setFilter(key: string, value: string) {
+    const next = { ...filters };
+    if (next[key as keyof typeof next] === value) {
+      delete next[key as keyof typeof next];
+    } else {
+      (next as Record<string, string>)[key] = value;
+    }
+    go(next as Record<string, string>);
+  }
+
+  function clearFilters() {
+    go({});
+  }
+
+  function setPeriod(key: string) {
+    const qs = new URLSearchParams();
+    qs.set("period", key);
+    for (const [k, v] of Object.entries(filters)) {
+      if (v) qs.set(k, v);
+    }
+    router.push(`${pathname}?${qs.toString()}`);
+  }
+
+  const filterLabels: [string, string][] = [
+    ["page", "Page"],
+    ["source", "Source"],
+    ["country", "Country"],
+    ["device", "Device"],
+    ["browser", "Browser"],
+    ["os", "OS"],
+  ];
+  const activeFilters = filterLabels.filter(([k]) => filters[k as keyof typeof filters]);
+
+  async function toggleEvent(name: string) {
+    setEvMsg("");
+    if (openEvent === name) {
+      setOpenEvent("");
+      setOccurrences([]);
+      return;
+    }
+    setOpenEvent(name);
+    setOccurrences([]);
+    try {
+      const res = await apiFetch<EventOccurrence[]>(
+        `/api/sites/${siteId}/events/${encodeURIComponent(name)}?${baseQ()}`,
+        token,
+      );
+      setOccurrences(res);
+    } catch (err: any) {
+      setEvMsg(err.message);
+    }
+  }
 
   function applyRange() {
     if (!fromD || !toD) return;
-    router.push(`${pathname}?from=${fromD}&to=${toD}`);
+    go({ from: fromD, to: toD });
   }
 
-  async function exportCsv() {
-    try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/sites/${siteId}/export?${from && to ? `from=${from}&to=${to}` : `period=${period}`}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      if (!res.ok) throw new Error("export failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `webstats-${props.site?.name || "site"}-${from && to ? `${from}_${to}` : period}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e: any) {
-      alert(e.message || "Export failed");
+  function exportCsv() {
+    const qs = new URLSearchParams();
+    if (from && to) {
+      qs.set("from", from);
+      qs.set("to", to);
+    } else {
+      qs.set("period", period);
     }
+    for (const [k, v] of Object.entries(filters)) {
+      if (v) qs.set(k, v);
+    }
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/sites/${siteId}/export?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("export failed");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `webstats-${props.site?.name || "site"}-${from && to ? `${from}_${to}` : period}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch((e: any) => alert(e.message || "Export failed"));
   }
 
   async function addGoal(e: React.FormEvent) {
@@ -180,7 +271,17 @@ export default function StatsView(props: {
       return;
     }
     try {
-      const res = await apiFetch<{ steps: FunnelStep[] }>(`/api/sites/${siteId}/funnel?${from && to ? `from=${from}&to=${to}` : `period=${period}`}`, token, {
+      const qs = new URLSearchParams();
+      if (from && to) {
+        qs.set("from", from);
+        qs.set("to", to);
+      } else {
+        qs.set("period", period);
+      }
+      for (const [k, v] of Object.entries(filters)) {
+        if (v) qs.set(k, v);
+      }
+      const res = await apiFetch<{ steps: FunnelStep[] }>(`/api/sites/${siteId}/funnel?${qs.toString()}`, token, {
         method: "POST",
         body: JSON.stringify({ paths }),
       });
@@ -261,7 +362,7 @@ export default function StatsView(props: {
               {PERIODS.map((p) => (
                 <button
                   key={p.key}
-                  onClick={() => router.push(`${pathname}?period=${p.key}`)}
+                  onClick={() => setPeriod(p.key)}
                   className={`rounded-md px-3.5 py-1.5 text-sm transition-colors ${
                     period === p.key && !from && !to
                       ? "bg-raised font-medium text-ink"
@@ -282,6 +383,29 @@ export default function StatsView(props: {
         </div>
       ) : (
         <>
+          {activeFilters.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-edge bg-card px-4 py-3">
+              <span className="text-xs font-medium uppercase tracking-wide text-faint">Filters</span>
+              {activeFilters.map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => setFilter(k, "")}
+                  className="group inline-flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-1 text-xs font-medium text-indigo-400 transition-colors hover:bg-indigo-500/20"
+                  title={`Remove ${label} filter`}
+                >
+                  {label}: {filters[k as keyof typeof filters]}
+                  <span className="text-indigo-400/70 group-hover:text-indigo-300">×</span>
+                </button>
+              ))}
+              <button
+                onClick={clearFilters}
+                className="text-xs font-medium text-faint transition-colors hover:text-ink"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+
           <RealtimePanel token={token} siteId={siteId} />
 
           <StatCards
@@ -301,12 +425,12 @@ export default function StatsView(props: {
           </Card>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <TopList title="Top pages" rows={props.pages} />
-            <TopList title="Referrers" rows={props.referrers} />
-            <DonutChart title="Devices" rows={props.devices} />
-            <DonutChart title="Browsers" rows={props.browsers} />
-            <DonutChart title="Operating systems" rows={props.os} />
-            <DonutChart title="Countries" rows={props.countries} />
+            <TopList title="Top pages" rows={props.pages} onSelect={(k) => setFilter("page", k)} />
+            <TopList title="Referrers" rows={props.referrers} onSelect={(k) => setFilter("source", k)} />
+            <DonutChart title="Devices" rows={props.devices} onSelect={(k) => setFilter("device", k)} />
+            <DonutChart title="Browsers" rows={props.browsers} onSelect={(k) => setFilter("browser", k)} />
+            <DonutChart title="Operating systems" rows={props.os} onSelect={(k) => setFilter("os", k)} />
+            <DonutChart title="Countries" rows={props.countries} onSelect={(k) => setFilter("country", k)} />
           </div>
 
           {props.campaigns.length > 0 && (
@@ -438,10 +562,48 @@ export default function StatsView(props: {
           <WorldMap points={props.world} />
 
           {props.events.length > 0 && (
-            <TopList
-              title="Custom events"
-              rows={props.events.map((e) => ({ key: e.name, value: e.count }))}
-            />
+            <Card title="Custom events" icon={<IconPulse className="h-4 w-4 text-indigo-500" />}>
+              <div className="space-y-2">
+                {props.events.map((e) => (
+                  <div key={e.name} className="overflow-hidden rounded-lg border border-edge/60">
+                    <button
+                      onClick={() => toggleEvent(e.name)}
+                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-raised"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{e.name}</span>
+                      <span className="text-xs text-faint">
+                        {e.visitors} visitors · {e.count} events
+                      </span>
+                      {e.max_value > 0 && (
+                        <span className="text-xs text-faint">
+                          avg {e.avg_value.toFixed(1)} · max {e.max_value.toFixed(1)}
+                        </span>
+                      )}
+                      <span className={`text-xs transition-transform ${openEvent === e.name ? "rotate-90" : ""}`}>›</span>
+                    </button>
+                    {openEvent === e.name && (
+                      <div className="border-t border-edge/60 bg-raised/40 px-3 py-2">
+                        {evMsg && <p className="py-1 text-xs text-red-500">{evMsg}</p>}
+                        {occurrences.length === 0 && !evMsg && (
+                          <p className="py-1 text-xs text-faint">No occurrences in this period.</p>
+                        )}
+                        {occurrences.map((o, i) => (
+                          <div key={i} className="flex items-start gap-3 border-b border-edge/40 py-1.5 last:border-0">
+                            <span className="whitespace-nowrap text-[11px] text-faint">
+                              {new Date(o.created_at).toLocaleString()}
+                            </span>
+                            <span className="max-w-48 truncate text-xs text-soft" title={o.url}>{o.url || "/"}</span>
+                            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint" title={JSON.stringify(o.props)}>
+                              {JSON.stringify(o.props)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Card>
           )}
         </>
       )}

@@ -37,7 +37,15 @@ function Tip({ active, payload }: any) {
   );
 }
 
-export default function DonutChart({ title, rows }: { title: string; rows: Row[] }) {
+export default function DonutChart({
+  title,
+  rows,
+  onSelect,
+}: {
+  title: string;
+  rows: Row[];
+  onSelect?: (key: string) => void;
+}) {
   if (!rows.length) return null;
   const total = rows.reduce((s, r) => s + r.value, 0);
   const data = rows.slice(0, 8).map((r, i) => ({
@@ -71,12 +79,16 @@ export default function DonutChart({ title, rows }: { title: string; rows: Row[]
         </ResponsiveContainer>
         <ul className="min-w-0 flex-1 space-y-2">
           {data.map((d) => (
-            <li key={d.name} className="flex items-center gap-2 text-xs">
+            <li
+              key={d.name}
+              onClick={() => onSelect?.(d.name)}
+              className={`flex items-center gap-2 text-xs ${onSelect ? "cursor-pointer" : ""}`}
+            >
               <span
                 className="h-2 w-2 shrink-0 rounded-full"
                 style={{ background: d.color }}
               />
-              <span className="min-w-0 flex-1 truncate text-soft">{d.name}</span>
+              <span className={`min-w-0 flex-1 truncate ${onSelect ? "text-soft hover:text-indigo-400" : "text-soft"}`}>{d.name}</span>
               <span className="shrink-0 tabular-nums text-faint">{d.pct}%</span>
             </li>
           ))}

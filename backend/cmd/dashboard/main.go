@@ -37,6 +37,8 @@ func main() {
 	api.Post("/auth/register", registerHandler(pool, authMgr))
 	api.Post("/auth/login", loginHandler(pool, authMgr))
 	api.Post("/auth/logout", authMgr.Middleware(), logoutHandler(pool, authMgr))
+	api.Get("/invites/:token", inviteInfoHandler(pool))
+	api.Post("/invites/:token", acceptInviteHandler(pool, authMgr))
 
 	authed := api.Group("", authMgr.Middleware())
 	authed.Get("/auth/me", meHandler(pool))
@@ -69,6 +71,15 @@ func main() {
 	stats.Delete("/goals/:goal_id", deleteGoalHandler(pool))
 	stats.Get("/goals/summary", goalSummariesHandler(pool))
 	stats.Post("/funnel", funnelHandler(pool))
+	stats.Get("/events/detail", eventDetailsHandler(pool))
+	stats.Get("/events/:name", eventOccurrencesHandler(pool))
+	stats.Get("/members", membersHandler(pool))
+	stats.Delete("/members/:user_id", removeMemberHandler(pool))
+	stats.Post("/invites", createInviteHandler(pool))
+	stats.Get("/invites", listInvitesHandler(pool))
+	stats.Delete("/invites/:invite_id", deleteInviteHandler(pool))
+	stats.Get("/settings", getSettingsHandler(pool))
+	stats.Patch("/settings", updateSettingsHandler(pool))
 
 	notif := authed.Group("/notifications")
 	notif.Get("/providers", listProvidersHandler(pool))
@@ -98,6 +109,7 @@ func main() {
 	go uptimeLoop(ctx, pool)
 	go alertLoop(ctx, pool)
 	go reportLoop(ctx, pool)
+	go retentionLoop(ctx, pool)
 
 	log.Printf("dashboard API listening on :%s", cfg.Port)
 	log.Fatal(app.Listen(cfg.Bind + ":" + cfg.Port))

@@ -51,10 +51,12 @@
 
   function optedOut() {
     try {
-      return localStorage.getItem(OPTOUT) === '1';
-    } catch (e) {
-      return false;
-    }
+      if (localStorage.getItem(OPTOUT) === '1') return true;
+    } catch (e) {}
+    try {
+      if (document.cookie.indexOf('webstats_optout') !== -1) return true;
+    } catch (e) {}
+    return false;
   }
 
   function send(payload) {

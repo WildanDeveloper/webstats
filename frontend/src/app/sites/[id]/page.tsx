@@ -1,7 +1,16 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions, apiFetch } from "@/lib/auth";
-import type { Overview, TimePoint, Row, EventRow, Site, WorldPoint, Campaign, GoalSummary } from "@/lib/types";
+import type {
+  Campaign,
+  EventDetail,
+  GoalSummary,
+  Overview,
+  Row,
+  Site,
+  TimePoint,
+  WorldPoint,
+} from "@/lib/types";
 import AppShell from "@/components/AppShell";
 import StatsView from "@/components/StatsView";
 
@@ -12,7 +21,17 @@ export default async function SitePage({
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { period?: string; from?: string; to?: string };
+  searchParams: {
+    period?: string;
+    from?: string;
+    to?: string;
+    page?: string;
+    source?: string;
+    country?: string;
+    device?: string;
+    browser?: string;
+    os?: string;
+  };
 }) {
   const session = await getServerSession(authOptions);
   if (!session?.token) redirect("/login");
@@ -20,7 +39,24 @@ export default async function SitePage({
   const period = searchParams.period || "7d";
   const from = searchParams.from || "";
   const to = searchParams.to || "";
-  const q = from && to ? `from=${from}&to=${to}` : `period=${period}`;
+  const filters = {
+    page: searchParams.page || "",
+    source: searchParams.source || "",
+    country: searchParams.country || "",
+    device: searchParams.device || "",
+    browser: searchParams.browser || "",
+    os: searchParams.os || "",
+  };
+  const parts: string[] = [];
+  if (from && to) {
+    parts.push(`from=${from}`, `to=${to}`);
+  } else {
+    parts.push(`period=${period}`);
+  }
+  for (const [k, v] of Object.entries(filters)) {
+    if (v) parts.push(`${k}=${encodeURIComponent(v)}`);
+  }
+  const q = parts.join("&");
 
   let site: Site | null = null;
   let overview: Overview | null = null;
@@ -31,7 +67,7 @@ export default async function SitePage({
   let browsers: Row[] = [];
   let os: Row[] = [];
   let countries: Row[] = [];
-  let events: EventRow[] = [];
+  let events: EventDetail[] = [];
   let world: WorldPoint[] = [];
   let campaigns: Campaign[] = [];
   let goals: GoalSummary[] = [];
@@ -49,7 +85,7 @@ export default async function SitePage({
         apiFetch<Row[]>(`/api/sites/${params.id}/browsers?${q}`, session.token),
         apiFetch<Row[]>(`/api/sites/${params.id}/os?${q}`, session.token),
         apiFetch<Row[]>(`/api/sites/${params.id}/countries?${q}`, session.token),
-        apiFetch<EventRow[]>(`/api/sites/${params.id}/events?${q}`, session.token),
+        apiFetch<EventDetail[]>(`/api/sites/${params.id}/events/detail?${q}`, session.token),
         apiFetch<WorldPoint[]>(`/api/sites/${params.id}/world?${q}`, session.token),
         apiFetch<Campaign[]>(`/api/sites/${params.id}/campaigns?${q}`, session.token),
         apiFetch<GoalSummary[]>(`/api/sites/${params.id}/goals/summary?${q}`, session.token),
@@ -72,6 +108,7 @@ export default async function SitePage({
           period={period}
           from={from}
           to={to}
+          filters={filters}
           overview={overview}
           timeseries={timeseries}
           pages={pages}

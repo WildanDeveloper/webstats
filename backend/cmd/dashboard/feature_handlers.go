@@ -18,7 +18,7 @@ import (
 func campaignsHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		out, err := analytics.Q.Campaigns(c.Context(), db, auth.UserID(c), c.Params("id"),
-			c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+			c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
@@ -98,7 +98,7 @@ func deleteGoalHandler(db *pgxpool.Pool) fiber.Handler {
 func goalSummariesHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		out, err := analytics.Q.GoalSummaries(c.Context(), db, auth.UserID(c), c.Params("id"),
-			c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+			c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
@@ -124,7 +124,7 @@ func funnelHandler(db *pgxpool.Pool) fiber.Handler {
 			in.Paths[i] = strings.TrimSpace(in.Paths[i])
 		}
 		out, err := analytics.Q.Funnel(c.Context(), db, auth.UserID(c), c.Params("id"),
-			c.Query("period", "7d"), c.Query("from"), c.Query("to"), in.Paths)
+			c.Query("period", "7d"), c.Query("from"), c.Query("to"), in.Paths, filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
@@ -402,12 +402,12 @@ func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteNa
 		Visitors  int64 `json:"visitors"`
 		Sessions  int64 `json:"sessions"`
 	}
-	ov, err := analytics.Q.Overview(ctx, pool, ownerID(ctx, pool, siteID), siteID, period, "", "")
+	ov, err := analytics.Q.Overview(ctx, pool, ownerID(ctx, pool, siteID), siteID, period, "", "", analytics.Filters{})
 	if err != nil {
 		return b, err
 	}
-	pages, _ := analytics.Q.Top(ctx, pool, ownerID(ctx, pool, siteID), siteID, period, "path", 5, "", "")
-	refs, _ := analytics.Q.Top(ctx, pool, ownerID(ctx, pool, siteID), siteID, period, "referrer", 5, "", "")
+	pages, _ := analytics.Q.Top(ctx, pool, ownerID(ctx, pool, siteID), siteID, period, "path", 5, "", "", analytics.Filters{})
+	refs, _ := analytics.Q.Top(ctx, pool, ownerID(ctx, pool, siteID), siteID, period, "referrer", 5, "", "", analytics.Filters{})
 	out.Pageviews = ov.Pageviews
 	out.Visitors = ov.Visitors
 	out.Sessions = ov.Sessions

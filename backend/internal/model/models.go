@@ -36,9 +36,11 @@ type Overview struct {
 }
 
 type TimePoint struct {
-	Date      string `json:"date"`
-	Pageviews int64  `json:"pageviews"`
-	Visitors  int64  `json:"visitors"`
+	Date          string `json:"date"`
+	Pageviews     int64  `json:"pageviews"`
+	Visitors      int64  `json:"visitors"`
+	PrevPageviews int64  `json:"prev_pageviews"`
+	PrevVisitors  int64  `json:"prev_visitors"`
 }
 
 type Row struct {
@@ -57,6 +59,50 @@ type EventRow struct {
 	Name   string `json:"name"`
 	Count  int64  `json:"count"`
 	LastAt string `json:"last_at"`
+}
+
+type EventDetail struct {
+	Name     string  `json:"name"`
+	Count    int64   `json:"count"`
+	Visitors int64   `json:"visitors"`
+	AvgValue float64 `json:"avg_value"`
+	MaxValue float64 `json:"max_value"`
+	MinValue float64 `json:"min_value"`
+}
+
+type EventOccurrence struct {
+	Name      string         `json:"name"`
+	SessionID string         `json:"session_id"`
+	URL       string         `json:"url"`
+	Props     map[string]any `json:"props"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+type SiteSettings struct {
+	SiteID        string `json:"site_id"`
+	IPHashing     bool   `json:"ip_hashing"`
+	RetentionDays int    `json:"retention_days"`
+}
+
+type Member struct {
+	UserID    string    `json:"user_id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	IsOwner   bool      `json:"is_owner"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Invite struct {
+	ID        string    `json:"id"`
+	SiteID    string    `json:"site_id"`
+	SiteName  string    `json:"site_name"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	Token     string    `json:"token"`
+	InviteURL string    `json:"invite_url,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type Realtime struct {

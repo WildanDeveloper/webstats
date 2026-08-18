@@ -34,6 +34,8 @@ export type TimePoint = {
   date: string;
   pageviews: number;
   visitors: number;
+  prev_pageviews: number;
+  prev_visitors: number;
 };
 
 export type Row = {
@@ -44,6 +46,51 @@ export type Row = {
 export type EventRow = {
   name: string;
   count: number;
+  last_at: string;
+};
+
+export type EventDetail = {
+  name: string;
+  count: number;
+  visitors: number;
+  avg_value: number;
+  max_value: number;
+  min_value: number;
+};
+
+export type EventOccurrence = {
+  name: string;
+  session_id: string;
+  url: string;
+  props: Record<string, any>;
+  created_at: string;
+};
+
+export type SiteSettings = {
+  site_id: string;
+  ip_hashing: boolean;
+  retention_days: number;
+};
+
+export type Member = {
+  user_id: string;
+  email: string;
+  name: string;
+  role: string;
+  is_owner: boolean;
+  created_at: string;
+};
+
+export type Invite = {
+  id: string;
+  site_id: string;
+  site_name: string;
+  email: string;
+  role: string;
+  token: string;
+  invite_url: string;
+  created_at: string;
+  expires_at: string;
 };
 
 export type SiteSeries = {

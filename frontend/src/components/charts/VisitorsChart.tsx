@@ -4,6 +4,7 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -103,6 +104,16 @@ export default function VisitorsChart({ data }: { data: TimePoint[] }) {
             dot={false}
             activeDot={{ r: 4, strokeWidth: 0 }}
           />
+          <Line
+            type="monotone"
+            dataKey="prev_pageviews"
+            name="Pageviews (previous period)"
+            stroke="#94a3b8"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            dot={false}
+            activeDot={false}
+          />
         </AreaChart>
       </ResponsiveContainer>
       <div className="mt-3 flex items-center gap-5 text-xs text-soft">
@@ -113,6 +124,10 @@ export default function VisitorsChart({ data }: { data: TimePoint[] }) {
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-emerald-400" />
           Unique visitors
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-slate-400" />
+          Previous period
         </span>
       </div>
     </div>

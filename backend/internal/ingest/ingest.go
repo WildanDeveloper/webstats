@@ -45,6 +45,7 @@ type Buffer struct {
 	redis   *redis.Client
 	ch      chan Record
 	siteIDs map[string]string
+	hashing map[string]bool
 	stop    chan struct{}
 }
 
@@ -55,6 +56,7 @@ func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver) *Buffer {
 		geo:     g,
 		ch:      make(chan Record, cfg.BufferSize),
 		siteIDs: map[string]string{},
+		hashing: map[string]bool{},
 		stop:    make(chan struct{}),
 	}
 	if cfg.RedisURL != "" {
@@ -65,6 +67,19 @@ func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver) *Buffer {
 		b.redis = redis.NewClient(opt)
 	}
 	return b
+}
+
+func (b *Buffer) IPHashing(ctx context.Context, siteID string) bool {
+	if v, ok := b.hashing[siteID]; ok {
+		return v
+	}
+	var ok bool
+	err := b.db.QueryRow(ctx, `SELECT ip_hashing FROM site_settings WHERE site_id = $1`, siteID).Scan(&ok)
+	if err != nil {
+		ok = true
+	}
+	b.hashing[siteID] = ok
+	return ok
 }
 
 func (b *Buffer) SiteExists(ctx context.Context, key string) bool {
@@ -200,9 +215,14 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 	if t, ok := raw["ts"].(float64); ok && t > 0 {
 		ts = time.UnixMilli(int64(t)).UTC()
 	}
+	ipHash := hashIP(ip, b.cfg.IPHashSalt)
+	siteID := str(raw["site_id"])
+	if !b.IPHashing(context.Background(), siteID) {
+		ipHash = ""
+	}
 	return Record{
 		Kind:      str(raw["kind"]),
-		SiteID:    str(raw["site_id"]),
+		SiteID:    siteID,
 		SessionID: str(raw["session_id"]),
 		Path:      str(raw["path"]),
 		Title:     str(raw["title"]),
@@ -211,7 +231,7 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 		Screen:    str(raw["screen"]),
 		Lang:      str(raw["lang"]),
 		Country:   cc,
-		IPHash:    hashIP(ip, b.cfg.IPHashSalt),
+		IPHash:    ipHash,
 		Ts:        ts,
 		EventName: str(raw["event_name"]),
 		URL:       str(raw["url"]),

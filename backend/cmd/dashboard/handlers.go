@@ -23,6 +23,17 @@ func errJSON(c *fiber.Ctx, code int, msg string) error {
 	return c.Status(code).JSON(fiber.Map{"error": msg})
 }
 
+func filtersFromQuery(c *fiber.Ctx) analytics.Filters {
+	return analytics.Filters{
+		Page:    c.Query("page"),
+		Source:  c.Query("source"),
+		Country: c.Query("country"),
+		Device:  c.Query("device"),
+		Browser: c.Query("browser"),
+		OS:      c.Query("os"),
+	}
+}
+
 var SiteColors = []string{
 	"#ef4444",
 	"#3b82f6",
@@ -142,7 +153,8 @@ func listSitesHandler(db *pgxpool.Pool) fiber.Handler {
 				SELECT status, latency_ms, checked_at FROM site_checks
 				WHERE site_id = s.id ORDER BY checked_at DESC LIMIT 1
 			) sc ON true
-			WHERE s.user_id = $1 ORDER BY s.created_at DESC`, auth.UserID(c))
+			WHERE s.user_id = $1 OR s.id IN (SELECT site_id FROM site_members WHERE user_id = $1)
+			ORDER BY s.created_at DESC`, auth.UserID(c))
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
@@ -324,7 +336,7 @@ func sslCheckHandler(db *pgxpool.Pool) fiber.Handler {
 
 func siteOverviewHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		o, err := analytics.Q.Overview(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+		o, err := analytics.Q.Overview(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
@@ -337,7 +349,7 @@ func siteOverviewHandler(db *pgxpool.Pool) fiber.Handler {
 
 func timeseriesHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		out, err := analytics.Q.Timeseries(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+		out, err := analytics.Q.Timeseries(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
@@ -350,7 +362,7 @@ func timeseriesHandler(db *pgxpool.Pool) fiber.Handler {
 
 func topHandler(db *pgxpool.Pool, column string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		out, err := analytics.Q.Top(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), column, 15, c.Query("from"), c.Query("to"))
+		out, err := analytics.Q.Top(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), column, 15, c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
@@ -364,6 +376,32 @@ func topHandler(db *pgxpool.Pool, column string) fiber.Handler {
 func eventsHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		out, err := analytics.Q.TopEvents(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errJSON(c, 404, "site not found")
+		}
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
+func eventDetailsHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		out, err := analytics.Q.EventDetails(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errJSON(c, 404, "site not found")
+		}
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
+func eventOccurrencesHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		out, err := analytics.Q.EventOccurrences(c.Context(), db, auth.UserID(c), c.Params("id"), c.Params("name"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), 10)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
@@ -587,7 +625,7 @@ func checksHandler(db *pgxpool.Pool) fiber.Handler {
 
 func worldHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		out, err := analytics.Q.World(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+		out, err := analytics.Q.World(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
@@ -600,7 +638,7 @@ func worldHandler(db *pgxpool.Pool) fiber.Handler {
 
 func exportHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		out, err := analytics.Q.ExportCSV(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+		out, err := analytics.Q.ExportCSV(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}
