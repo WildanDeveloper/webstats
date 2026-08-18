@@ -1,23 +1,33 @@
 # Caddy reverse proxy configuration for WebStats
 #
+# SINGLE DOMAIN setup (recommended, only one DNS record needed):
+#   stats.yourdomain.com  ->  frontend :3000
+#   stats.yourdomain.com/_api     ->  dashboard API :8086
+#   stats.yourdomain.com/_tracker ->  ingestion API :8085
+#
 # Replace yourdomain.com with your real domain, then run:
 #   caddy fmt && systemctl reload caddy
 #
-# DNS: create A records pointing to this server:
-#   stats.yourdomain.com   -> server IP
-#   api.yourdomain.com     -> server IP
-#   tracker.yourdomain.com -> server IP
+# DNS: one A record:
+#   stats.yourdomain.com -> server IP
 #
 # SSL certificates are issued automatically by Caddy (Let's Encrypt).
+#
+# OPTIONAL 3-subdomain variant (uncomment and remove the single-domain
+# block above):
+#   api.yourdomain.com      { reverse_proxy 127.0.0.1:8086 }
+#   tracker.yourdomain.com  { reverse_proxy 127.0.0.1:8085 }
 
 stats.yourdomain.com {
-	reverse_proxy 127.0.0.1:3000
-}
-
-api.yourdomain.com {
-	reverse_proxy 127.0.0.1:8086
-}
-
-tracker.yourdomain.com {
-	reverse_proxy 127.0.0.1:8085
+	handle /_api/* {
+		uri strip_prefix /_api
+		reverse_proxy 127.0.0.1:8086
+	}
+	handle /_tracker/* {
+		uri strip_prefix /_tracker
+		reverse_proxy 127.0.0.1:8085
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
 }
