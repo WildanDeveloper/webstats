@@ -1,0 +1,18 @@
+[Unit]
+Description=WebStats Ingestion API (tracker endpoint)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/webstats/backend
+EnvironmentFile=/etc/webstats.env
+Environment=PORT=8085
+Environment=BIND=127.0.0.1
+ExecStart=/root/webstats/backend/bin/ingest
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

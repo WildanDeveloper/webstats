@@ -74,7 +74,7 @@ func main() {
 	go uptimeLoop(ctx, pool)
 
 	log.Printf("dashboard API listening on :%s", cfg.Port)
-	log.Fatal(app.Listen(":" + cfg.Port))
+	log.Fatal(app.Listen(cfg.Bind + ":" + cfg.Port))
 }
 
 func uptimeLoop(ctx context.Context, pool *pgxpool.Pool) {

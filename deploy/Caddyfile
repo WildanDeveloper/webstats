@@ -1,0 +1,23 @@
+# Caddy reverse proxy configuration for WebStats
+#
+# Replace yourdomain.com with your real domain, then run:
+#   caddy fmt && systemctl reload caddy
+#
+# DNS: create A records pointing to this server:
+#   stats.yourdomain.com   -> server IP
+#   api.yourdomain.com     -> server IP
+#   tracker.yourdomain.com -> server IP
+#
+# SSL certificates are issued automatically by Caddy (Let's Encrypt).
+
+stats.yourdomain.com {
+	reverse_proxy 127.0.0.1:3000
+}
+
+api.yourdomain.com {
+	reverse_proxy 127.0.0.1:8086
+}
+
+tracker.yourdomain.com {
+	reverse_proxy 127.0.0.1:8085
+}

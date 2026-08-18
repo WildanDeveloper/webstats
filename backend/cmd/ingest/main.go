@@ -48,5 +48,5 @@ func main() {
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"ok": true}) })
 
 	log.Printf("ingestion API listening on :%s", cfg.Port)
-	log.Fatal(app.Listen(":" + cfg.Port))
+	log.Fatal(app.Listen(cfg.Bind + ":" + cfg.Port))
 }

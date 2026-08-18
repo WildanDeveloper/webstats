@@ -7,6 +7,7 @@ import (
 
 type Config struct {
 	Port         string
+	Bind         string
 	DBURL        string
 	JWTSecret    string
 	RedisURL     string
@@ -28,6 +29,7 @@ func getenv(key, def string) string {
 func Load() *Config {
 	return &Config{
 		Port:         getenv("PORT", "8080"),
+		Bind:         os.Getenv("BIND"),
 		DBURL:        getenv("DATABASE_URL", "postgres://webstats:webstats@localhost:5432/webstats"),
 		JWTSecret:    getenv("JWT_SECRET", "webstats-dev-secret-change-me"),
 		RedisURL:     os.Getenv("REDIS_URL"),

@@ -120,6 +120,20 @@ CSV file is provided (`GEO_CSV`). Users can opt out with
 make tracker   # uses terser, required after editing tracker/track.js
 ```
 
+## Deploy on your own domain
+
+Ready-made production setup (Caddy reverse proxy with automatic SSL,
+systemd services, environment template) lives in `deploy/`:
+
+```bash
+cp deploy/webstats.env.example /etc/webstats.env   # fill in secrets + domain
+cp deploy/*.service /etc/systemd/system/ && systemctl daemon-reload
+systemctl enable --now webstats-dashboard webstats-ingest webstats-frontend
+cp deploy/Caddyfile /etc/caddy/Caddyfile && systemctl reload caddy
+```
+
+Full step-by-step guide (DNS, database, SSL, updates): `deploy/README.md`.
+
 ---
 
 Created by [WildanDev](https://wildandev.tech)
