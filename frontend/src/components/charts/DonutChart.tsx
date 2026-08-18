@@ -3,28 +3,34 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import type { Row } from "@/lib/types";
 
-const nf = new Intl.NumberFormat("id-ID");
+const nf = new Intl.NumberFormat("en-US");
 
 const COLORS = [
   "#6366f1",
-  "#34d399",
-  "#fbbf24",
-  "#22d3ee",
-  "#f472b6",
-  "#a78bfa",
-  "#fb7185",
-  "#4ade80",
+  "#10b981",
+  "#f59e0b",
+  "#06b6d4",
+  "#ec4899",
+  "#8b5cf6",
+  "#ef4444",
+  "#84cc16",
   "#facc15",
-  "#818cf8",
+  "#3b82f6",
 ];
 
 function Tip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
   const d = payload[0];
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs shadow-xl">
-      <span className="font-medium text-zinc-200">{d.name}</span>
-      <span className="ml-2 text-zinc-400">
+    <div
+      className="rounded-lg border px-3 py-2 text-xs shadow-xl"
+      style={{
+        background: "var(--tip-bg)",
+        borderColor: "var(--tip-border)",
+      }}
+    >
+      <span style={{ color: "var(--ink)", fontWeight: 500 }}>{d.name}</span>
+      <span className="ml-2" style={{ color: "var(--soft)" }}>
         {nf.format(d.value)} ({d.payload.pct}%)
       </span>
     </div>
@@ -42,8 +48,8 @@ export default function DonutChart({ title, rows }: { title: string; rows: Row[]
   }));
 
   return (
-    <section className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-      <h2 className="mb-2 text-sm font-semibold text-zinc-300">{title}</h2>
+    <section className="rounded-xl border border-edge bg-card p-5">
+      <h2 className="mb-2 text-sm font-semibold text-ink">{title}</h2>
       <div className="flex items-center gap-2">
         <ResponsiveContainer width="55%" height={210}>
           <PieChart>
@@ -70,8 +76,8 @@ export default function DonutChart({ title, rows }: { title: string; rows: Row[]
                 className="h-2 w-2 shrink-0 rounded-full"
                 style={{ background: d.color }}
               />
-              <span className="min-w-0 flex-1 truncate text-zinc-300">{d.name}</span>
-              <span className="shrink-0 tabular-nums text-zinc-500">{d.pct}%</span>
+              <span className="min-w-0 flex-1 truncate text-soft">{d.name}</span>
+              <span className="shrink-0 tabular-nums text-faint">{d.pct}%</span>
             </li>
           ))}
         </ul>

@@ -111,7 +111,8 @@ func siteOwned(ctx context.Context, db *pgxpool.Pool, userID, siteID string) (bo
 	return ok, err
 }
 
-func bounds(period string) (from time.Time, to time.Time, hourly bool) {
+// PeriodBounds returns the from/to window and bucket granularity for a period.
+func PeriodBounds(period string) (from time.Time, to time.Time, hourly bool) {
 	to = time.Now().UTC()
 	switch period {
 	case "24h", "today":
@@ -133,7 +134,7 @@ func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID
 	} else if !ok {
 		return model.Overview{}, pgx.ErrNoRows
 	}
-	from, to, _ := bounds(period)
+	from, to, _ := PeriodBounds(period)
 
 	var out model.Overview
 	err := db.QueryRow(ctx, `
@@ -168,7 +169,7 @@ func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, site
 	} else if !ok {
 		return nil, pgx.ErrNoRows
 	}
-	from, to, hourly := bounds(period)
+	from, to, hourly := PeriodBounds(period)
 	trunc, fmt := "day", "YYYY-MM-DD"
 	if hourly {
 		trunc, fmt = "hour", "YYYY-MM-DD HH24:00"
@@ -184,7 +185,7 @@ func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, site
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.TimePoint
+	out := make([]model.TimePoint, 0)
 	for rows.Next() {
 		var p model.TimePoint
 		if err := rows.Scan(&p.Date, &p.Pageviews, &p.Visitors); err != nil {
@@ -201,7 +202,7 @@ func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, per
 	} else if !ok {
 		return nil, pgx.ErrNoRows
 	}
-	from, to, _ := bounds(period)
+	from, to, _ := PeriodBounds(period)
 	order := "count(*) DESC"
 	if column == "referrer" {
 		column = "referrer_host"
@@ -221,7 +222,7 @@ func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, per
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.Row
+	out := make([]model.Row, 0)
 	for rows.Next() {
 		var r model.Row
 		if err := rows.Scan(&r.Key, &r.Value); err != nil {
@@ -238,7 +239,7 @@ func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteI
 	} else if !ok {
 		return nil, pgx.ErrNoRows
 	}
-	from, to, _ := bounds(period)
+	from, to, _ := PeriodBounds(period)
 	rows, err := db.Query(ctx, `
 		SELECT name, count(*) FROM events
 		WHERE site_id = $1 AND created_at >= $2 AND created_at < $3
@@ -248,7 +249,7 @@ func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteI
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.EventRow
+	out := make([]model.EventRow, 0)
 	for rows.Next() {
 		var r model.EventRow
 		if err := rows.Scan(&r.Name, &r.Count); err != nil {
@@ -257,6 +258,112 @@ func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteI
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+type SiteSeries struct {
+	SiteID string            `json:"site_id"`
+	Name   string            `json:"name"`
+	Color  string            `json:"color"`
+	Points []model.TimePoint `json:"points"`
+}
+
+type RootOverview struct {
+	Pageviews int64        `json:"pageviews"`
+	Visitors  int64        `json:"visitors"`
+	Sites     int64        `json:"sites"`
+	Events    int64        `json:"events"`
+	Series    []SiteSeries `json:"series"`
+}
+
+// RootOverview aggregates the current user's sites for the dashboard chart.
+func (q *Queries) RootOverview(ctx context.Context, db *pgxpool.Pool, userID, period string) (RootOverview, error) {
+	from, to, hourly := PeriodBounds(period)
+	trunc, sqlLayout := "day", "YYYY-MM-DD"
+	if hourly {
+		trunc, sqlLayout = "hour", "YYYY-MM-DD HH24:00"
+	}
+	goLayout := "2006-01-02"
+	if hourly {
+		goLayout = "2006-01-02 15:00"
+	}
+	dateExpr := "to_char(date_trunc('" + trunc + "', p.visited_at), '" + sqlLayout + "')"
+
+	var out RootOverview
+	err := db.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM pageviews p JOIN sites s ON s.id = p.site_id WHERE s.user_id = $1 AND p.visited_at >= $2 AND p.visited_at < $3),
+			(SELECT count(DISTINCT p.session_id) FROM pageviews p JOIN sites s ON s.id = p.site_id WHERE s.user_id = $1 AND p.visited_at >= $2 AND p.visited_at < $3),
+			(SELECT count(*) FROM sites WHERE user_id = $1),
+			(SELECT count(*) FROM events e JOIN sites s ON s.id = e.site_id WHERE s.user_id = $1 AND e.created_at >= $2 AND e.created_at < $3)`,
+		userID, from, to).Scan(&out.Pageviews, &out.Visitors, &out.Sites, &out.Events)
+	if err != nil {
+		return out, err
+	}
+
+	rows, err := db.Query(ctx, `
+		SELECT s.id, s.name, s.color,
+		       COALESCE(`+dateExpr+`, ''),
+		       count(p.id),
+		       count(DISTINCT p.session_id)
+		FROM sites s
+		LEFT JOIN pageviews p ON p.site_id = s.id AND p.visited_at >= $1 AND p.visited_at < $2
+		WHERE s.user_id = $3
+		GROUP BY s.id, s.name, s.color, `+dateExpr+`
+		ORDER BY s.created_at`, from, to, userID)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+
+	type acc struct {
+		siteID   string
+		name     string
+		color    string
+		counts   map[string]int64
+		visitors map[string]int64
+	}
+	order := []string{}
+	byID := map[string]*acc{}
+	for rows.Next() {
+		var id, name, color, date string
+		var n, v int64
+		if err := rows.Scan(&id, &name, &color, &date, &n, &v); err != nil {
+			return out, err
+		}
+		if _, ok := byID[id]; !ok {
+			byID[id] = &acc{siteID: id, name: name, color: color, counts: map[string]int64{}, visitors: map[string]int64{}}
+			order = append(order, id)
+		}
+		if date != "" {
+			byID[id].counts[date] = n
+			byID[id].visitors[date] = v
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	for _, id := range order {
+		a := byID[id]
+		points := fillSeries(from, to, hourly, goLayout, a.counts, a.visitors)
+		out.Series = append(out.Series, SiteSeries{
+			SiteID: a.siteID, Name: a.name, Color: a.color, Points: points,
+		})
+	}
+	return out, nil
+}
+
+func fillSeries(from, to time.Time, hourly bool, layout string, counts, visitors map[string]int64) []model.TimePoint {
+	var pts []model.TimePoint
+	step := 24 * time.Hour
+	if hourly {
+		step = time.Hour
+	}
+	for t := from.Truncate(step); t.Before(to); t = t.Add(step) {
+		k := t.Format(layout)
+		pts = append(pts, model.TimePoint{Date: k, Pageviews: counts[k], Visitors: visitors[k]})
+	}
+	return pts
 }
 
 type Queries struct{}

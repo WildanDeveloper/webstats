@@ -47,14 +47,14 @@ export default async function SitePage({
         apiFetch<EventRow[]>(`/api/sites/${params.id}/events?${q}`, session.token),
       ]);
   } catch (e: any) {
-    error = e.message || "Gagal mengambil data";
+    error = e.message || "Failed to load data";
   }
 
   return (
     <AppShell
       name={session.user?.name || ""}
       email={session.user?.email || ""}
-      token={session.token}
+      role={session.user?.role || "user"}
     >
       <div className="mx-auto max-w-6xl px-6 py-8 lg:px-10">
         <StatsView

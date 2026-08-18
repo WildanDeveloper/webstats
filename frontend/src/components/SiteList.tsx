@@ -12,6 +12,7 @@ import {
   IconCheck,
   IconChart,
   IconCode,
+  IconSettings,
 } from "@/components/icons";
 
 const trackerUrl =
@@ -53,33 +54,30 @@ export default function SiteList({
   }
 
   async function remove(id: string) {
-    if (!confirm("Hapus situs ini beserta seluruh datanya?")) return;
+    if (!confirm("Delete this site and all of its data?")) return;
     await apiFetch(`/api/sites/${id}`, token, { method: "DELETE" });
     setSites((s) => s.filter((x) => x.id !== id));
   }
 
   const inputCls =
-    "w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500";
+    "w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink placeholder-faint outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500";
 
   return (
     <div className="mt-8 space-y-8">
       <section id="install">
-        <h2 className="text-sm font-semibold text-zinc-300">Cara pasang</h2>
+        <h2 className="text-sm font-semibold text-ink">How to install</h2>
         <ol className="mt-3 grid gap-3 sm:grid-cols-3">
           {[
-            ["1", "Buat situs", "Klik “Tambah situs” dan isi nama + domain."],
-            ["2", "Salin kode", "Salin satu baris script dari kartu situs."],
-            ["3", "Tempel di situs", "Letakkan sebelum </body>. Data langsung masuk."],
+            ["1", "Create a site", 'Click "Add site" and enter a name and domain.'],
+            ["2", "Copy the script", "Copy the one-line script from the site card."],
+            ["3", "Paste on your site", "Place it before </body>. Data starts flowing."],
           ].map(([n, t, d]) => (
-            <li
-              key={n}
-              className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"
-            >
-              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-500/15 text-xs font-semibold text-indigo-300">
+            <li key={n} className="rounded-xl border border-edge bg-card p-4">
+              <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-500/15 text-xs font-semibold text-indigo-500">
                 {n}
               </div>
-              <p className="mt-2.5 text-sm font-medium text-zinc-200">{t}</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">{d}</p>
+              <p className="mt-2.5 text-sm font-medium text-ink">{t}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-faint">{d}</p>
             </li>
           ))}
         </ol>
@@ -88,25 +86,25 @@ export default function SiteList({
       <section>
         <form
           onSubmit={create}
-          className="flex flex-wrap items-end gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5"
+          className="flex flex-wrap items-end gap-3 rounded-xl border border-edge bg-card p-5"
         >
           <div className="w-44">
-            <label className="text-xs font-medium text-zinc-400">Nama situs</label>
+            <label className="text-xs font-medium text-soft">Site name</label>
             <input
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
               className={`${inputCls} mt-1.5`}
-              placeholder="Blog saya"
+              placeholder="My blog"
             />
           </div>
           <div className="w-44">
-            <label className="text-xs font-medium text-zinc-400">Domain</label>
+            <label className="text-xs font-medium text-soft">Domain</label>
             <input
               value={domain}
               onChange={(e) => setDomain(e.target.value)}
               className={`${inputCls} mt-1.5`}
-              placeholder="contoh.com"
+              placeholder="example.com"
             />
           </div>
           <button
@@ -115,15 +113,15 @@ export default function SiteList({
             className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <IconPlus className="h-4 w-4" />
-            {creating ? "Membuat..." : "Tambah situs"}
+            {creating ? "Creating..." : "Add site"}
           </button>
           {error && <p className="w-full text-sm text-red-400">{error}</p>}
         </form>
 
         {sites.length === 0 ? (
-          <div className="mt-6 flex flex-col items-center rounded-xl border border-dashed border-zinc-800 py-16 text-center">
+          <div className="mt-6 flex flex-col items-center rounded-xl border border-dashed border-edge py-16 text-center">
             <svg
-              className="h-16 w-16 text-zinc-700"
+              className="h-16 w-16 text-faint"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -136,11 +134,9 @@ export default function SiteList({
               <circle cx="13" cy="6" r="1" fill="currentColor" />
               <path d="M3 21h18" />
             </svg>
-            <p className="mt-4 text-sm font-medium text-zinc-300">
-              Belum ada situs
-            </p>
-            <p className="mt-1 text-sm text-zinc-500">
-              Tambahkan situs pertamamu lewat form di atas.
+            <p className="mt-4 text-sm font-medium text-ink">No sites yet</p>
+            <p className="mt-1 text-sm text-faint">
+              Add your first website using the form above.
             </p>
           </div>
         ) : (
@@ -148,27 +144,28 @@ export default function SiteList({
             {sites.map((site) => (
               <div
                 key={site.id}
-                className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 transition-colors hover:border-zinc-700"
+                className="rounded-xl border border-edge bg-card p-5 transition-colors hover:border-faint"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3.5">
-                    <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950 text-indigo-400">
-                      <IconGlobe className="h-5 w-5" />
-                    </span>
+                    <span
+                      className="mt-1 h-3 w-3 shrink-0 rounded-full"
+                      style={{ background: site.color || "#6366f1" }}
+                    />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2.5">
                         <Link
                           href={`/sites/${site.id}`}
-                          className="font-semibold text-zinc-100 hover:text-indigo-400"
+                          className="font-semibold text-ink hover:text-indigo-500"
                         >
                           {site.name}
                         </Link>
-                        <span className="rounded-full border border-zinc-800 px-2 py-0.5 text-[11px] text-zinc-500">
-                          {site.domain || "tanpa domain"}
+                        <span className="rounded-full border border-edge px-2 py-0.5 text-[11px] text-faint">
+                          {site.domain || "no domain"}
                         </span>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <code className="truncate rounded-md border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-zinc-300">
+                        <code className="truncate rounded-md border border-edge bg-raised px-2.5 py-1.5 font-mono text-xs text-soft">
                           {installCode(site)}
                         </code>
                         <button
@@ -177,14 +174,14 @@ export default function SiteList({
                             setCopied(site.id);
                             setTimeout(() => setCopied(null), 1500);
                           }}
-                          className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-800"
+                          className="flex items-center gap-1.5 rounded-md border border-edge px-2.5 py-1.5 text-xs text-soft transition-colors hover:bg-raised"
                         >
                           {copied === site.id ? (
-                            <IconCheck className="h-3.5 w-3.5 text-emerald-400" />
+                            <IconCheck className="h-3.5 w-3.5 text-emerald-500" />
                           ) : (
                             <IconCopy className="h-3.5 w-3.5" />
                           )}
-                          {copied === site.id ? "Tersalin" : "Salin"}
+                          {copied === site.id ? "Copied" : "Copy"}
                         </button>
                       </div>
                     </div>
@@ -195,21 +192,27 @@ export default function SiteList({
                       className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
                     >
                       <IconChart className="h-4 w-4" />
-                      Statistik
+                      Stats
+                    </Link>
+                    <Link
+                      href={`/sites/${site.id}/settings`}
+                      title="Site settings"
+                      className="rounded-lg border border-edge p-2 text-faint transition-colors hover:bg-raised hover:text-ink"
+                    >
+                      <IconSettings className="h-4 w-4" />
                     </Link>
                     <button
                       onClick={() => remove(site.id)}
-                      title="Hapus situs"
-                      className="rounded-lg border border-zinc-800 p-2 text-zinc-500 transition-colors hover:border-red-900/60 hover:bg-red-950/40 hover:text-red-400"
+                      title="Delete site"
+                      className="rounded-lg border border-edge p-2 text-faint transition-colors hover:border-red-900/60 hover:bg-red-950/40 hover:text-red-400"
                     >
                       <IconTrash className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
-                <p className="mt-3 flex items-center gap-1.5 text-xs text-zinc-500">
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-faint">
                   <IconCode className="h-3.5 w-3.5" />
-                  Site key:{" "}
-                  <code className="text-indigo-300">{site.site_key}</code>
+                  Site key: <code className="text-indigo-500">{site.site_key}</code>
                 </p>
               </div>
             ))}

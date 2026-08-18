@@ -3,13 +3,39 @@
 @tailwind utilities;
 
 :root {
+  color-scheme: light;
+  --bg: 250 250 250;
+  --card: 255 255 255;
+  --raised: 244 244 245;
+  --edge: 228 228 231;
+  --ink: 24 24 27;
+  --soft: 82 82 91;
+  --faint: 161 161 170;
+  --grid: #e4e4e7;
+  --tip-bg: #ffffff;
+  --tip-border: #e4e4e7;
+}
+
+.dark {
   color-scheme: dark;
+  --bg: 9 9 11;
+  --card: 24 24 27;
+  --raised: 39 39 42;
+  --edge: 39 39 42;
+  --ink: 244 244 245;
+  --soft: 161 161 170;
+  --faint: 113 113 122;
+  --grid: #27272a;
+  --tip-bg: #18181b;
+  --tip-border: #3f3f46;
 }
 
 body {
   font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-feature-settings: "cv11", "ss01";
+  background-color: rgb(var(--bg));
+  color: rgb(var(--ink));
 }
 
 ::selection {
@@ -18,5 +44,20 @@ body {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #3f3f46 transparent;
+  scrollbar-color: rgb(var(--edge)) transparent;
+}
+
+/* Recharts theming via CSS so charts follow dark/light mode */
+.recharts-cartesian-grid line {
+  stroke: var(--grid);
+}
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line {
+  stroke: var(--grid);
+}
+.recharts-cartesian-axis-tick text {
+  fill: var(--faint);
+}
+.recharts-tooltip-cursor {
+  stroke: var(--grid);
 }

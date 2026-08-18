@@ -3,13 +3,13 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import AuthShell from "@/components/auth/AuthShell";
-import { IconMail, IconLock, IconArrowLeft } from "@/components/icons";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { IconMail, IconLock } from "@/components/icons";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState("admin@webstats.dev");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,7 +25,7 @@ export default function LoginPage() {
     });
     setLoading(false);
     if (res?.error) {
-      setError("Email atau password salah");
+      setError("Wrong email or password");
     } else {
       router.push("/");
       router.refresh();
@@ -33,24 +33,29 @@ export default function LoginPage() {
   }
 
   const inputCls =
-    "w-full rounded-lg border border-zinc-700 bg-zinc-950 py-2.5 pl-10 pr-3 text-sm text-zinc-100 placeholder-zinc-500 outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500";
+    "w-full rounded-lg border border-edge bg-bg py-2.5 pl-10 pr-3 text-sm text-ink placeholder-faint outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500";
 
   return (
     <AuthShell>
-      <h2 className="text-xl font-semibold tracking-tight text-zinc-100">
-        Selamat datang kembali
-      </h2>
-      <p className="mt-1 text-sm text-zinc-400">
-        Masuk ke akun WebStats kamu.
-      </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight text-ink">
+            Welcome back
+          </h2>
+          <p className="mt-1 text-sm text-soft">
+            Sign in to your WebStats account.
+          </p>
+        </div>
+        <ThemeToggle />
+      </div>
 
       <form onSubmit={onSubmit} className="mt-7 space-y-4">
         <div>
-          <label htmlFor="email" className="text-xs font-medium text-zinc-400">
+          <label htmlFor="email" className="text-xs font-medium text-soft">
             Email
           </label>
           <div className="relative mt-1.5">
-            <IconMail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <IconMail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
             <input
               id="email"
               type="email"
@@ -59,16 +64,16 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className={inputCls}
-              placeholder="nama@perusahaan.com"
+              placeholder="name@company.com"
             />
           </div>
         </div>
         <div>
-          <label htmlFor="password" className="text-xs font-medium text-zinc-400">
+          <label htmlFor="password" className="text-xs font-medium text-soft">
             Password
           </label>
           <div className="relative mt-1.5">
-            <IconLock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <IconLock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint" />
             <input
               id="password"
               type="password"
@@ -97,26 +102,31 @@ export default function LoginPage() {
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
                 <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
               </svg>
-              Memproses...
+              Signing in...
             </>
           ) : (
-            "Masuk"
+            "Sign in"
           )}
         </button>
       </form>
 
-      <p className="mt-6 text-center text-sm text-zinc-400">
-        Belum punya akun?{" "}
-        <Link
-          href="/register"
+      <div className="mt-6 rounded-lg border border-edge bg-raised/60 px-3.5 py-3 text-xs leading-relaxed text-soft">
+        Default admin account:{" "}
+        <code className="font-mono text-indigo-500">admin@webstats.dev</code>{" "}
+        /{" "}
+        <code className="font-mono text-indigo-500">admin123</code>
+      </div>
+
+      <p className="mt-6 text-center text-sm text-faint">
+        Created by{" "}
+        <a
+          href="https://wildandev.tech"
+          target="_blank"
+          rel="noreferrer"
           className="font-medium text-indigo-400 hover:text-indigo-300"
         >
-          Daftar gratis
-        </Link>
-      </p>
-      <p className="mt-3 flex items-center justify-center gap-1 text-xs text-zinc-600 lg:hidden">
-        <IconArrowLeft className="h-3 w-3" />
-        WebStats — analitik web open source
+          WildanDev
+        </a>
       </p>
     </AuthShell>
   );

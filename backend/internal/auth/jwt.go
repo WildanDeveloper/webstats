@@ -15,6 +15,7 @@ import (
 type Claims struct {
 	UserID string `json:"uid"`
 	Email  string `json:"email"`
+	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
 
@@ -41,11 +42,12 @@ func (m *Manager) CheckPassword(hash, pw string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
 
-func (m *Manager) Issue(userID, email string) (string, error) {
+func (m *Manager) Issue(userID, email, role string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		UserID: userID,
 		Email:  email,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
 			IssuedAt:  jwt.NewNumericDate(now),

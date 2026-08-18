@@ -10,8 +10,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "WebStats — Analitik Web",
-  description: "Analitik web open source yang ringan, cepat, dan privat.",
+  title: "WebStats — Web Analytics",
+  description:
+    "Open-source web analytics. Lightweight tracker, your own data.",
 };
 
 export default function RootLayout({
@@ -20,8 +21,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="id" className="dark">
-      <body className={`${inter.variable} bg-zinc-950 font-sans text-zinc-100 antialiased`}>
+    <html lang="en" className="dark">
+      <body className={`${inter.variable} bg-bg font-sans text-ink antialiased`}>
         <Providers>{children}</Providers>
       </body>
     </html>

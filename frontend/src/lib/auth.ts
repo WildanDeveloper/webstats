@@ -23,11 +23,12 @@ export const authOptions: NextAuthOptions = {
           }),
         });
         const data = await res.json();
-        if (res.ok && data.token) {
+if (res.ok && data.token) {
           return {
             id: data.user.id,
             email: data.user.email,
             name: data.user.name || data.user.email,
+            role: data.user.role || "user",
             token: data.token,
           } as any;
         }
@@ -42,13 +43,15 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.token = (user as any).token;
         token.id = (user as any).id;
+        token.role = (user as any).role;
       }
       return token;
     },
     async session({ session, token }) {
       (session as any).token = token.token;
-      (session as any).user.id = token.id || "";
       if (session.user) {
+        session.user.id = (token.id as string) || "";
+        session.user.role = (token.role as string) || "user";
         session.user.name = (token.name as string) || "";
         session.user.email = (token.email as string) || "";
       }

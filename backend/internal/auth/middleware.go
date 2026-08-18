@@ -21,6 +21,19 @@ func (m *Manager) Middleware() fiber.Handler {
 		}
 		c.Locals("uid", claims.UserID)
 		c.Locals("email", claims.Email)
+		c.Locals("role", claims.Role)
+		c.Locals("claims", claims)
+		return c.Next()
+	}
+}
+
+// AdminOnly restricts a route group to users with the admin role.
+func (m *Manager) AdminOnly() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		claims, ok := c.Locals("claims").(*Claims)
+		if !ok || claims.Role != "admin" {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "admin access required"})
+		}
 		return c.Next()
 	}
 }
@@ -30,4 +43,11 @@ func UserID(c *fiber.Ctx) string {
 		return v
 	}
 	return ""
+}
+
+func UserRole(c *fiber.Ctx) string {
+	if v, ok := c.Locals("role").(string); ok {
+		return v
+	}
+	return "user"
 }

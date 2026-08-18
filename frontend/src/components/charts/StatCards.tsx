@@ -2,7 +2,7 @@
 
 import { IconMouse, IconUsers, IconPercent, IconCalendar } from "@/components/icons";
 
-const fmt = new Intl.NumberFormat("id-ID");
+const fmt = new Intl.NumberFormat("en-US");
 
 export default function StatCards({
   pageviews,
@@ -20,25 +20,25 @@ export default function StatCards({
       label: "Pageviews",
       value: fmt.format(pageviews),
       icon: IconMouse,
-      tint: "text-indigo-400 bg-indigo-500/10",
+      tint: "text-indigo-500 bg-indigo-500/10",
     },
     {
-      label: "Pengunjung unik",
+      label: "Unique visitors",
       value: fmt.format(visitors),
       icon: IconUsers,
-      tint: "text-emerald-400 bg-emerald-500/10",
+      tint: "text-emerald-500 bg-emerald-500/10",
     },
     {
       label: "Bounce rate",
       value: bounceRate.toFixed(1) + "%",
       icon: IconPercent,
-      tint: "text-amber-400 bg-amber-500/10",
+      tint: "text-amber-500 bg-amber-500/10",
     },
     {
-      label: "Rata-rata per hari",
+      label: "Average per day",
       value: avgPerDay.toFixed(1),
       icon: IconCalendar,
-      tint: "text-sky-400 bg-sky-500/10",
+      tint: "text-sky-500 bg-sky-500/10",
     },
   ];
 
@@ -47,15 +47,15 @@ export default function StatCards({
       {cards.map((c) => (
         <div
           key={c.label}
-          className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5"
+          className="rounded-xl border border-edge bg-card p-5"
         >
           <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${c.tint}`}>
             <c.icon className="h-[18px] w-[18px]" />
           </span>
-          <p className="mt-3 text-2xl font-semibold tracking-tight text-zinc-100">
+          <p className="mt-3 text-2xl font-semibold tracking-tight text-ink">
             {c.value}
           </p>
-          <p className="mt-0.5 text-xs text-zinc-500">{c.label}</p>
+          <p className="mt-0.5 text-xs text-faint">{c.label}</p>
         </div>
       ))}
     </div>

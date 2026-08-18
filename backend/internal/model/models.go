@@ -6,6 +6,7 @@ type User struct {
 	ID       string    `json:"id"`
 	Email    string    `json:"email"`
 	Name     string    `json:"name"`
+	Role     string    `json:"role"`
 	Password string    `json:"-"`
 	Created  time.Time `json:"created_at"`
 }
@@ -16,6 +17,7 @@ type Site struct {
 	Name      string    `json:"name"`
 	Domain    string    `json:"domain"`
 	SiteKey   string    `json:"site_key"`
+	Color     string    `json:"color"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
