@@ -1,5 +1,5 @@
--- 001_init.sql
--- users, sites, api_keys, sessions
+
+
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 

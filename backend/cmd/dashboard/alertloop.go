@@ -8,8 +8,6 @@ import (
 	"github.com/webstats/backend/internal/notify"
 )
 
-// alertLoop watches site status transitions and traffic spikes,
-// firing matching notification rules. Runs once a minute.
 func alertLoop(ctx context.Context, pool *pgxpool.Pool) {
 	run := func() {
 		sites := map[string]string{}
@@ -65,7 +63,6 @@ func alertLoop(ctx context.Context, pool *pgxpool.Pool) {
 	}
 }
 
-// fireSiteEvent delivers every enabled rule for site+event.
 func fireSiteEvent(ctx context.Context, pool *pgxpool.Pool, siteID, event string) {
 	rows, err := pool.Query(ctx, `
 		SELECT r.user_id, r.id, r.channel, r.target, r.provider_id, r.params, s.name, s.domain
@@ -92,8 +89,6 @@ func fireSiteEvent(ctx context.Context, pool *pgxpool.Pool, siteID, event string
 	}
 }
 
-// checkSpikes fires traffic_spike rules when the last hour exceeds
-// the average hourly traffic of the previous 7 days by the rule threshold.
 func checkSpikes(ctx context.Context, pool *pgxpool.Pool) {
 	rows, err := pool.Query(ctx, `
 		SELECT r.user_id, r.id, r.site_id, r.channel, r.target, r.provider_id, r.params, s.name, s.domain

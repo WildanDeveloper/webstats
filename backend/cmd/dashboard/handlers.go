@@ -23,18 +23,17 @@ func errJSON(c *fiber.Ctx, code int, msg string) error {
 	return c.Status(code).JSON(fiber.Map{"error": msg})
 }
 
-// SiteColors are auto-assigned to new sites in order (editable later).
 var SiteColors = []string{
-	"#ef4444", // red
-	"#3b82f6", // blue
-	"#10b981", // emerald
-	"#f59e0b", // amber
-	"#8b5cf6", // violet
-	"#ec4899", // pink
-	"#06b6d4", // cyan
-	"#84cc16", // lime
-	"#f97316", // orange
-	"#0ea5e9", // sky
+	"#ef4444",
+	"#3b82f6",
+	"#10b981",
+	"#f59e0b",
+	"#8b5cf6",
+	"#ec4899",
+	"#06b6d4",
+	"#84cc16",
+	"#f97316",
+	"#0ea5e9",
 }
 
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -375,8 +374,6 @@ func eventsHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
-// ---------- admin ----------
-
 func validRole(r string) bool { return r == "admin" || r == "user" }
 
 func listUsersHandler(db *pgxpool.Pool) fiber.Handler {
@@ -457,7 +454,7 @@ func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 		if id == uid && in.Role != nil && *in.Role != "admin" {
 			return errJSON(c, 400, "you cannot demote your own account")
 		}
-		// prevent removing the last admin
+
 		if in.Role != nil && *in.Role == "user" {
 			var isAdmin bool
 			_ = db.QueryRow(c.Context(), `SELECT role = 'admin' FROM users WHERE id = $1`, id).Scan(&isAdmin)

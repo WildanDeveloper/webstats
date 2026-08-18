@@ -35,7 +35,6 @@ func main() {
 	app := fiber.New(fiber.Config{ProxyHeader: "X-Forwarded-For"})
 	app.Use(cors.New(cors.Config{AllowOrigins: cfg.AllowOrigins, AllowMethods: "GET,POST,OPTIONS", AllowHeaders: "Content-Type"}))
 
-	// The tracking script itself is served here so sites only need one line.
 	app.Get("/track.js", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "application/javascript; charset=utf-8")
 		c.Set("Cache-Control", "public, max-age=86400")

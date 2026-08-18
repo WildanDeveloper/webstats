@@ -19,8 +19,6 @@ type Resolver struct {
 	loaded  bool
 }
 
-// Load parses a GeoLite2-Country-Locations CSV ("network,geoname_id,...").
-// It is optional: without a file, lookups return "".
 func Load(path string) (*Resolver, error) {
 	r := &Resolver{}
 	if path == "" {
@@ -28,7 +26,7 @@ func Load(path string) (*Resolver, error) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return r, nil // silent fallback, file is optional
+		return r, nil
 	}
 	defer f.Close()
 

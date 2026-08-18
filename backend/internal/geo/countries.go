@@ -1,7 +1,5 @@
 package geo
 
-// LatLng returns the centroid coordinates for an ISO-3166 alpha-2 country code.
-// Unknown codes return (0,0).
 var coords = map[string][2]float64{
 	"AD": {42.5, 1.6}, "AE": {23.4, 53.8}, "AF": {33.9, 67.7}, "AG": {17.1, -61.8},
 	"AI": {18.2, -63.1}, "AL": {41.2, 20.2}, "AM": {40.1, 45.0}, "AO": {-11.2, 17.9},

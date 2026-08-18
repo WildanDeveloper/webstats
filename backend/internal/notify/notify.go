@@ -16,7 +16,6 @@ import (
 	"time"
 )
 
-// Message is a single outgoing notification email.
 type Message struct {
 	From    string
 	To      string
@@ -25,12 +24,10 @@ type Message struct {
 	Text    string
 }
 
-// Sender delivers a Message.
 type Sender interface {
 	Send(ctx context.Context, m Message) error
 }
 
-// Kind is the provider type name.
 const (
 	KindSMTP     = "smtp"
 	KindResend   = "resend"
@@ -40,10 +37,8 @@ const (
 	KindBrevo    = "brevo"
 )
 
-// ProviderKinds lists all selectable email provider types.
 var ProviderKinds = []string{KindSMTP, KindResend, KindSendgrid, KindMailgun, KindPostmark, KindBrevo}
 
-// NewSender builds a Sender from a provider config map.
 func NewSender(kind string, cfg map[string]any, fromEmail string) (Sender, error) {
 	switch kind {
 	case KindSMTP:
@@ -61,8 +56,6 @@ func NewSender(kind string, cfg map[string]any, fromEmail string) (Sender, error
 	}
 	return nil, fmt.Errorf("unknown provider kind: %s", kind)
 }
-
-// ---------- SMTP ----------
 
 func newSMTP(cfg map[string]any, fromEmail string) (Sender, error) {
 	host, _ := cfg["host"].(string)
@@ -149,8 +142,6 @@ func (s *smtpSender) Send(ctx context.Context, m Message) error {
 	return c.Quit()
 }
 
-// ---------- Resend ----------
-
 func newResend(cfg map[string]any, fromEmail string) Sender {
 	return &apiSender{
 		name: "resend",
@@ -165,8 +156,6 @@ func newResend(cfg map[string]any, fromEmail string) Sender {
 		},
 	}
 }
-
-// ---------- SendGrid ----------
 
 func newSendgrid(cfg map[string]any, fromEmail string) Sender {
 	region, _ := cfg["region"].(string)
@@ -191,8 +180,6 @@ func newSendgrid(cfg map[string]any, fromEmail string) Sender {
 	}
 }
 
-// ---------- Mailgun ----------
-
 func newMailgun(cfg map[string]any, fromEmail string) Sender {
 	domain, _ := cfg["domain"].(string)
 	apiKey, _ := cfg["api_key"].(string)
@@ -216,8 +203,6 @@ func newMailgun(cfg map[string]any, fromEmail string) Sender {
 	}
 }
 
-// ---------- Postmark ----------
-
 func newPostmark(cfg map[string]any, fromEmail string) Sender {
 	return &apiSender{
 		name: "postmark",
@@ -232,8 +217,6 @@ func newPostmark(cfg map[string]any, fromEmail string) Sender {
 		},
 	}
 }
-
-// ---------- Brevo ----------
 
 func newBrevo(cfg map[string]any, fromEmail string) Sender {
 	fromName, _ := cfg["from_name"].(string)
@@ -252,8 +235,6 @@ func newBrevo(cfg map[string]any, fromEmail string) Sender {
 		},
 	}
 }
-
-// ---------- shared API sender ----------
 
 type apiSender struct {
 	name        string
@@ -297,9 +278,6 @@ func (s *apiSender) Send(ctx context.Context, m Message) error {
 	return nil
 }
 
-// ---------- Webhook ----------
-
-// Webhook posts a JSON alert payload to a target URL.
 type Webhook struct {
 	URL    string
 	Secret string
@@ -331,8 +309,6 @@ func (w *Webhook) Send(ctx context.Context, payload map[string]any) error {
 	}
 	return nil
 }
-
-// ---------- helpers ----------
 
 func str(v any) string {
 	if s, ok := v.(string); ok {

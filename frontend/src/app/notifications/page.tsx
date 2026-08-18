@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions, apiFetch } from "@/lib/auth";
-import type { NotifLog, NotifProvider, NotifRule, Site } from "@/lib/types";
+import type { NotifLog, NotifProvider, NotifRule, Report, Site } from "@/lib/types";
 import AppShell from "@/components/AppShell";
 import NotificationsView from "@/components/NotificationsView";
 
@@ -14,18 +14,18 @@ export default async function NotificationsPage() {
   let providers: NotifProvider[] = [];
   let rules: NotifRule[] = [];
   let logs: NotifLog[] = [];
+  let reports: Report[] = [];
   let sites: Site[] = [];
 
   try {
-    [providers, rules, logs, sites] = await Promise.all([
+    [providers, rules, logs, reports, sites] = await Promise.all([
       apiFetch<NotifProvider[]>("/api/notifications/providers", session.token),
       apiFetch<NotifRule[]>("/api/notifications/rules", session.token),
       apiFetch<NotifLog[]>("/api/notifications/logs", session.token),
+      apiFetch<Report[]>("/api/notifications/reports", session.token),
       apiFetch<Site[]>("/api/sites", session.token),
     ]);
-  } catch {
-    // surface errors inside the client view
-  }
+  } catch {}
 
   return (
     <AppShell
@@ -44,6 +44,7 @@ export default async function NotificationsPage() {
           providers={providers}
           rules={rules}
           logs={logs}
+          reports={reports}
           sites={sites}
           token={session.token}
         />

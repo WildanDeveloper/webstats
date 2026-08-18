@@ -1,15 +1,15 @@
-/**
- * webstats tracking script — vanilla JS, ~3kb minified.
- *
- * Install:
- *   <script async src="https://YOUR_HOST/track.js" data-site="SITE_KEY"></script>
- *
- * Custom events:
- *   window.webstats.event('signup', { plan: 'pro' });
- *
- * Opt-out:
- *   localStorage.setItem('_wst_optout', '1');
- */
+
+
+
+
+
+
+
+
+
+
+
+
 (function () {
   'use strict';
 
@@ -19,7 +19,7 @@
   var SITE = script.getAttribute('data-site');
   if (!SITE) return;
 
-  // Where the ingestion API lives. Defaults to the script's origin.
+  
   var host = script.getAttribute('data-host') || (script.src ? script.src.replace(/\/track\.js.*$/, '') : '');
   var auto = script.getAttribute('data-auto') !== 'false';
   var collect = host + '/api/collect';
@@ -67,7 +67,7 @@
       }
       fetch(collect, { method: 'POST', body: blob, keepalive: true });
     } catch (e) {
-      // queue for retry
+      
       try {
         var q = JSON.parse(localStorage.getItem(QUEUE) || '[]');
         q.push(payload);
@@ -85,9 +85,21 @@
     } catch (e) {}
   }
 
+  function utmParams() {
+    var out = { utm_source: '', utm_medium: '', utm_campaign: '', utm_content: '', utm_term: '' };
+    try {
+      var q = new URLSearchParams(location.search);
+      for (var k in out) {
+        if (q.has(k)) out[k] = (q.get(k) || '').slice(0, 200);
+      }
+    } catch (e) {}
+    return out;
+  }
+
   function pageview() {
     var ref = document.referrer;
     if (ref.indexOf(location.origin) === 0) ref = '';
+    var u = utmParams();
     var payload = {
       kind: 'pageview',
       site_id: SITE,
@@ -100,10 +112,13 @@
       ua: navigator.userAgent,
       ts: Date.now()
     };
+    for (var k in u) {
+      if (u[k]) payload[k] = u[k];
+    }
     send(payload);
   }
 
-  // SPA support: hook history API + popstate.
+  
   var lastPath = '';
   function hook() {
     var orig = history.pushState;

@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions, apiFetch } from "@/lib/auth";
-import type { Overview, TimePoint, Row, EventRow, Site, WorldPoint } from "@/lib/types";
+import type { Overview, TimePoint, Row, EventRow, Site, WorldPoint, Campaign, GoalSummary } from "@/lib/types";
 import AppShell from "@/components/AppShell";
 import StatsView from "@/components/StatsView";
 
@@ -33,10 +33,12 @@ export default async function SitePage({
   let countries: Row[] = [];
   let events: EventRow[] = [];
   let world: WorldPoint[] = [];
+  let campaigns: Campaign[] = [];
+  let goals: GoalSummary[] = [];
   let error = "";
 
   try {
-    [site, overview, timeseries, pages, referrers, devices, browsers, os, countries, events, world] =
+    [site, overview, timeseries, pages, referrers, devices, browsers, os, countries, events, world, campaigns, goals] =
       await Promise.all([
         apiFetch<Site>(`/api/sites/${params.id}`, session.token),
         apiFetch<Overview>(`/api/sites/${params.id}/overview?${q}`, session.token),
@@ -49,6 +51,8 @@ export default async function SitePage({
         apiFetch<Row[]>(`/api/sites/${params.id}/countries?${q}`, session.token),
         apiFetch<EventRow[]>(`/api/sites/${params.id}/events?${q}`, session.token),
         apiFetch<WorldPoint[]>(`/api/sites/${params.id}/world?${q}`, session.token),
+        apiFetch<Campaign[]>(`/api/sites/${params.id}/campaigns?${q}`, session.token),
+        apiFetch<GoalSummary[]>(`/api/sites/${params.id}/goals/summary?${q}`, session.token),
       ]);
   } catch (e: any) {
     error = e.message || "Failed to load data";
@@ -78,6 +82,8 @@ export default async function SitePage({
           countries={countries}
           events={events}
           world={world}
+          campaigns={campaigns}
+          goals={goals}
           error={error}
         />
       </div>

@@ -19,23 +19,23 @@ import (
 
 const RedisList = "webstats:pageviews"
 
-// Record is the normalized event received from the tracker.
 type Record struct {
-	Kind      string         `json:"kind"`
-	SiteID    string         `json:"site_id"`
-	SessionID string         `json:"session_id"`
-	Path      string         `json:"path"`
-	Title     string         `json:"title"`
-	Referrer  string         `json:"referrer"`
-	UA        string         `json:"ua"`
-	Screen    string         `json:"screen"`
-	Lang      string         `json:"lang"`
-	Country   string         `json:"country"`
-	IPHash    string         `json:"ip_hash"`
-	Ts        time.Time      `json:"ts"`
-	EventName string         `json:"event_name"`
-	URL       string         `json:"url"`
-	Props     map[string]any `json:"props"`
+	Kind      string            `json:"kind"`
+	SiteID    string            `json:"site_id"`
+	SessionID string            `json:"session_id"`
+	Path      string            `json:"path"`
+	Title     string            `json:"title"`
+	Referrer  string            `json:"referrer"`
+	UA        string            `json:"ua"`
+	Screen    string            `json:"screen"`
+	Lang      string            `json:"lang"`
+	Country   string            `json:"country"`
+	IPHash    string            `json:"ip_hash"`
+	Ts        time.Time         `json:"ts"`
+	EventName string            `json:"event_name"`
+	URL       string            `json:"url"`
+	Props     map[string]any    `json:"props"`
+	UTM       map[string]string `json:"-"`
 }
 
 type Buffer struct {
@@ -67,12 +67,10 @@ func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver) *Buffer {
 	return b
 }
 
-// SiteExists caches site keys in memory (validated against DB).
 func (b *Buffer) SiteExists(ctx context.Context, key string) bool {
 	return b.SiteID(ctx, key) != ""
 }
 
-// SiteID resolves a public site_key to its internal UUID, with caching.
 func (b *Buffer) SiteID(ctx context.Context, key string) string {
 	if id, ok := b.siteIDs[key]; ok {
 		return id
@@ -88,8 +86,6 @@ func (b *Buffer) SiteID(ctx context.Context, key string) string {
 
 func (b *Buffer) Stop() { close(b.stop) }
 
-// Run starts the flusher goroutine. In Redis mode the buffer only pushes
-// to Redis and the standalone worker does the batch insert.
 func (b *Buffer) Run(ctx context.Context) {
 	go b.flusher(ctx)
 }
@@ -143,7 +139,6 @@ func (b *Buffer) flusher(ctx context.Context) {
 	}
 }
 
-// Flush persists a batch of records and refreshes daily aggregates.
 func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 	pvs := make([]analytics.PageviewRow, 0, len(recs))
 	evs := make([]analytics.EventRowIn, 0, 8)
@@ -168,7 +163,7 @@ func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 				Title: r.Title, Referrer: r.Referrer, ReferrerHost: hostOf(r.Referrer),
 				UA: r.UA, Browser: info.Browser, OS: info.OS, Device: info.Device,
 				Country: r.Country, Screen: r.Screen, Lang: r.Lang,
-				IPHash: r.IPHash, VisitedAt: r.Ts,
+				IPHash: r.IPHash, VisitedAt: r.Ts, UTM: r.UTM,
 			})
 			sites[r.SiteID] = true
 			d := r.Ts.UTC().Truncate(24 * time.Hour)
@@ -195,7 +190,6 @@ func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 	return nil
 }
 
-// Normalize fills in server-side fields (country, ip hash) from a raw payload.
 func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 	uaStr := str(raw["ua"])
 	cc := ""
@@ -222,6 +216,13 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 		EventName: str(raw["event_name"]),
 		URL:       str(raw["url"]),
 		Props:     mapAny(raw["props"]),
+		UTM: map[string]string{
+			"utm_source":   str(raw["utm_source"]),
+			"utm_medium":   str(raw["utm_medium"]),
+			"utm_campaign": str(raw["utm_campaign"]),
+			"utm_content":  str(raw["utm_content"]),
+			"utm_term":     str(raw["utm_term"]),
+		},
 	}
 }
 
@@ -251,7 +252,6 @@ func hostOf(referrer string) string {
 	return strings.ToLower(u.Hostname())
 }
 
-// FlushNow lets external callers (e.g. the standalone worker) persist records.
 func (b *Buffer) FlushNow(ctx context.Context, recs []Record) error {
 	return b.flush(ctx, recs)
 }

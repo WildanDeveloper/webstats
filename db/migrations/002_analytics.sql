@@ -1,5 +1,5 @@
--- 002_analytics.sql
--- time-series data: pageviews, events + daily aggregate
+
+
 
 CREATE TABLE IF NOT EXISTS pageviews (
     id            BIGSERIAL PRIMARY KEY,

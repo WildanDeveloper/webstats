@@ -27,7 +27,6 @@ func (m *Manager) Middleware() fiber.Handler {
 	}
 }
 
-// AdminOnly restricts a route group to users with the admin role.
 func (m *Manager) AdminOnly() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		claims, ok := c.Locals("claims").(*Claims)

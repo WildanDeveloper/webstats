@@ -15,21 +15,22 @@ import (
 )
 
 type PageviewRow struct {
-	SiteID       string    `json:"site_id"`
-	SessionID    string    `json:"session_id"`
-	Path         string    `json:"path"`
-	Title        string    `json:"title"`
-	Referrer     string    `json:"referrer"`
-	ReferrerHost string    `json:"referrer_host"`
-	UA           string    `json:"ua"`
-	Browser      string    `json:"browser"`
-	OS           string    `json:"os"`
-	Device       string    `json:"device"`
-	Country      string    `json:"country"`
-	Screen       string    `json:"screen"`
-	Lang         string    `json:"lang"`
-	IPHash       string    `json:"ip_hash"`
-	VisitedAt    time.Time `json:"visited_at"`
+	SiteID       string            `json:"site_id"`
+	SessionID    string            `json:"session_id"`
+	Path         string            `json:"path"`
+	Title        string            `json:"title"`
+	Referrer     string            `json:"referrer"`
+	ReferrerHost string            `json:"referrer_host"`
+	UA           string            `json:"ua"`
+	Browser      string            `json:"browser"`
+	OS           string            `json:"os"`
+	Device       string            `json:"device"`
+	Country      string            `json:"country"`
+	Screen       string            `json:"screen"`
+	Lang         string            `json:"lang"`
+	IPHash       string            `json:"ip_hash"`
+	VisitedAt    time.Time         `json:"visited_at"`
+	UTM          map[string]string `json:"-"`
 }
 
 type EventRowIn struct {
@@ -52,14 +53,24 @@ func InsertPageviews(ctx context.Context, db *pgxpool.Pool, rows []PageviewRow) 
 	defer tx.Rollback(ctx)
 	for _, r := range rows {
 		if _, err := tx.Exec(ctx, `INSERT INTO pageviews
-				(site_id, session_id, path, title, referrer, referrer_host, ua, browser, os, device, country, screen, lang, ip_hash, visited_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+				(site_id, session_id, path, title, referrer, referrer_host, ua, browser, os, device, country, screen, lang, ip_hash, visited_at,
+				 utm_source, utm_medium, utm_campaign, utm_content, utm_term)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 			r.SiteID, r.SessionID, r.Path, r.Title, r.Referrer, r.ReferrerHost,
-			r.UA, r.Browser, r.OS, r.Device, r.Country, r.Screen, r.Lang, r.IPHash, r.VisitedAt); err != nil {
+			r.UA, r.Browser, r.OS, r.Device, r.Country, r.Screen, r.Lang, r.IPHash, r.VisitedAt,
+			utm(r.UTM, "utm_source"), utm(r.UTM, "utm_medium"), utm(r.UTM, "utm_campaign"),
+			utm(r.UTM, "utm_content"), utm(r.UTM, "utm_term")); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func utm(m map[string]string, key string) string {
+	if m == nil {
+		return ""
+	}
+	return m[key]
 }
 
 func InsertEvents(ctx context.Context, db *pgxpool.Pool, rows []EventRowIn) error {
@@ -81,7 +92,6 @@ func InsertEvents(ctx context.Context, db *pgxpool.Pool, rows []EventRowIn) erro
 	return tx.Commit(ctx)
 }
 
-// AggregateDaily upserts daily rollups from raw pageviews for the given range.
 func AggregateDaily(ctx context.Context, db *pgxpool.Pool, siteID string, from, to time.Time) error {
 	_, err := db.Exec(ctx, `
 		WITH sess AS (
@@ -116,8 +126,6 @@ func siteOwned(ctx context.Context, db *pgxpool.Pool, userID, siteID string) (bo
 	return ok, err
 }
 
-// PeriodBounds returns the from/to window and bucket granularity for a period.
-// Optional from/to override (YYYY-MM-DD or YYYY-MM-DD HH:MM, UTC) for custom ranges.
 func PeriodBounds(period, fromStr, toStr string) (from time.Time, to time.Time, hourly bool) {
 	if fromStr != "" && toStr != "" {
 		for _, layout := range []string{"2006-01-02 15:04", "2006-01-02"} {
@@ -293,7 +301,6 @@ type RootOverview struct {
 	Series    []SiteSeries `json:"series"`
 }
 
-// RootOverview aggregates the current user's sites for the dashboard chart.
 func (q *Queries) Realtime(ctx context.Context, db *pgxpool.Pool, userID, siteID string) (model.Realtime, error) {
 	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
 		return model.Realtime{}, err
@@ -544,4 +551,170 @@ var Q = &Queries{}
 
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
+}
+
+type Campaign struct {
+	Source   string `json:"source"`
+	Medium   string `json:"medium"`
+	Campaign string `json:"campaign"`
+	Content  string `json:"content"`
+	Count    int64  `json:"count"`
+	Visitors int64  `json:"visitors"`
+}
+
+func (q *Queries) Campaigns(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) ([]Campaign, error) {
+	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, pgx.ErrNoRows
+	}
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	rows, err := db.Query(ctx, `
+		SELECT COALESCE(NULLIF(utm_source, ''), '(none)'),
+		       COALESCE(NULLIF(utm_medium, ''), '(none)'),
+		       COALESCE(NULLIF(utm_campaign, ''), '(none)'),
+		       COALESCE(NULLIF(utm_content, ''), '(none)'),
+		       count(*), count(DISTINCT session_id)
+		FROM pageviews
+		WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3
+		  AND (utm_source <> '' OR utm_medium <> '' OR utm_campaign <> '')
+		GROUP BY 1,2,3,4 ORDER BY count(*) DESC LIMIT 50`,
+		siteID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Campaign, 0)
+	for rows.Next() {
+		var c Campaign
+		if err := rows.Scan(&c.Source, &c.Medium, &c.Campaign, &c.Content, &c.Count, &c.Visitors); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+type Goal struct {
+	ID        string    `json:"id"`
+	SiteID    string    `json:"site_id"`
+	Name      string    `json:"name"`
+	Path      string    `json:"path"`
+	MatchType string    `json:"match_type"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type GoalSummary struct {
+	Goal
+	Pageviews     int64   `json:"pageviews"`
+	Conversions   int64   `json:"conversions"`
+	ConversionPct float64 `json:"conversion_pct"`
+}
+
+func (q *Queries) Goals(ctx context.Context, db *pgxpool.Pool, userID, siteID string) ([]Goal, error) {
+	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, pgx.ErrNoRows
+	}
+	rows, err := db.Query(ctx, `
+		SELECT id, site_id, name, path, match_type, created_at
+		FROM goals WHERE site_id = $1 ORDER BY created_at`, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Goal, 0)
+	for rows.Next() {
+		var g Goal
+		if err := rows.Scan(&g.ID, &g.SiteID, &g.Name, &g.Path, &g.MatchType, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (q *Queries) GoalSummaries(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) ([]GoalSummary, error) {
+	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, pgx.ErrNoRows
+	}
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	rows, err := db.Query(ctx, `
+		SELECT g.id, g.name, g.path, g.match_type,
+		       count(DISTINCT p.session_id),
+		       (SELECT count(DISTINCT session_id) FROM pageviews WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3)
+		FROM goals g
+		LEFT JOIN pageviews p ON p.site_id = g.site_id
+			AND p.visited_at >= $2 AND p.visited_at < $3
+			AND (g.match_type = 'contains' AND p.path LIKE '%' || g.path || '%'
+			  OR g.match_type = 'exact' AND p.path = g.path)
+		WHERE g.site_id = $1
+		GROUP BY g.id, g.name, g.path, g.match_type
+		ORDER BY g.created_at`, siteID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]GoalSummary, 0)
+	for rows.Next() {
+		var g GoalSummary
+		var visitors int64
+		if err := rows.Scan(&g.ID, &g.Name, &g.Path, &g.MatchType, &g.Conversions, &visitors); err != nil {
+			return nil, err
+		}
+		if visitors > 0 {
+			g.ConversionPct = float64(g.Conversions) / float64(visitors) * 100
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+type FunnelReport struct {
+	Steps []struct {
+		Path     string `json:"path"`
+		Label    string `json:"label"`
+		Sessions int64  `json:"sessions"`
+	} `json:"steps"`
+}
+
+func (q *Queries) Funnel(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, paths []string) (FunnelReport, error) {
+	var out FunnelReport
+	if len(paths) == 0 {
+		return out, nil
+	}
+	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
+		return out, err
+	} else if !ok {
+		return out, pgx.ErrNoRows
+	}
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	for i := range paths {
+		step := paths[:i+1]
+		label := ""
+		if i == len(paths)-1 {
+			label = "converted"
+		}
+		var n int64
+		err := db.QueryRow(ctx, `
+			SELECT count(*) FROM (
+				SELECT session_id FROM pageviews
+				WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3
+				  AND path = ANY($4::text[])
+				GROUP BY session_id
+				HAVING count(DISTINCT path) = array_length($4, 1)
+			) s`, siteID, from, to, step).Scan(&n)
+		if err != nil {
+			return out, err
+		}
+		out.Steps = append(out.Steps, struct {
+			Path     string `json:"path"`
+			Label    string `json:"label"`
+			Sessions int64  `json:"sessions"`
+		}{Path: paths[i], Label: label, Sessions: n})
+	}
+	return out, nil
 }

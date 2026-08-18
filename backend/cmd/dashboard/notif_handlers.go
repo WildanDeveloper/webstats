@@ -47,8 +47,6 @@ func validProviderKind(k string) bool {
 	return false
 }
 
-// ---------- providers ----------
-
 func listProvidersHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
@@ -228,8 +226,6 @@ func testProviderHandler(db *pgxpool.Pool) fiber.Handler {
 		return c.JSON(fiber.Map{"ok": true})
 	}
 }
-
-// ---------- rules ----------
 
 func listRulesHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -429,8 +425,6 @@ func deleteRuleHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
-// ---------- test delivery ----------
-
 func testRuleHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		id := c.Params("id")
@@ -461,8 +455,6 @@ func testRuleHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
-// deliverRule sends the payload through the rule channel and logs the attempt.
-// Returns the log detail (ok message or the error message).
 func deliverRule(ctx context.Context, db *pgxpool.Pool, uid, channel, target string,
 	providerID *string, params map[string]any, payload notify.AlertPayload, isTest bool) (string, error) {
 
@@ -520,8 +512,6 @@ func payloadMap(p notify.AlertPayload) map[string]any {
 	_ = json.Unmarshal(b, &m)
 	return m
 }
-
-// ---------- logs ----------
 
 func logsHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {

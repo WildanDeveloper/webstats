@@ -13,9 +13,6 @@ import (
 	"github.com/webstats/backend/internal/ingest"
 )
 
-// Worker drains the Redis queue (BRPOP) in batches and persists records.
-// Only needed when REDIS_URL is set; otherwise the ingestion API buffers
-// in-process. Run with: ./worker
 func main() {
 	cfg := config.Load()
 	if cfg.RedisURL == "" {
@@ -40,7 +37,7 @@ func main() {
 	log.Printf("worker started, draining %s (batch=%d)", ingest.RedisList, cfg.BatchSize)
 
 	for {
-		// Blocking pop with 5s timeout; returns zero values on timeout.
+
 		res, err := rdb.BRPop(ctx, 5*time.Second, ingest.RedisList).Result()
 		if err == redis.Nil {
 			continue

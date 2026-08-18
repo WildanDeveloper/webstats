@@ -134,3 +134,48 @@ export type NotifLog = {
   site_name: string;
   domain: string;
 };
+
+export type Campaign = {
+  source: string;
+  medium: string;
+  campaign: string;
+  content: string;
+  count: number;
+  visitors: number;
+};
+
+export type Goal = {
+  id: string;
+  site_id: string;
+  name: string;
+  path: string;
+  match_type: string;
+  created_at: string;
+};
+
+export type GoalSummary = Goal & {
+  pageviews: number;
+  conversions: number;
+  conversion_pct: number;
+};
+
+export type FunnelStep = {
+  path: string;
+  label: string;
+  sessions: number;
+};
+
+export type Report = {
+  id: string;
+  site_id: string;
+  site_name: string;
+  domain: string;
+  provider_id: string;
+  provider_name: string;
+  recipient: string;
+  frequency: string;
+  day: string;
+  hour: number;
+  enabled: boolean;
+  last_sent_at: string | null;
+};

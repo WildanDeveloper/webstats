@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/auth";
-import type { NotifLog, NotifProvider, NotifRule, Site } from "@/lib/types";
+import type { NotifLog, NotifProvider, NotifRule, Report, Site } from "@/lib/types";
 import { IconBell, IconPlus, IconTrash, IconBolt, IconMail, IconLink } from "@/components/icons";
 
 const PROVIDER_KINDS = ["smtp", "resend", "sendgrid", "mailgun", "postmark", "brevo"];
@@ -70,30 +70,33 @@ export default function NotificationsView({
   providers: initialProviders,
   rules: initialRules,
   logs: initialLogs,
+  reports: initialReports,
   sites,
   token,
 }: {
   providers: NotifProvider[];
   rules: NotifRule[];
   logs: NotifLog[];
+  reports: Report[];
   sites: Site[];
   token: string;
 }) {
   const [providers, setProviders] = useState(initialProviders);
   const [rules, setRules] = useState(initialRules);
   const [logs, setLogs] = useState(initialLogs);
+  const [reports, setReports] = useState(initialReports);
   const [siteId, setSiteId] = useState(sites[0]?.id || "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // provider form
+  
   const [pName, setPName] = useState("");
   const [pKind, setPKind] = useState("resend");
   const [pFrom, setPFrom] = useState("");
   const [pCfg, setPCfg] = useState<Record<string, string>>({});
   const [showAdd, setShowAdd] = useState(false);
 
-  // rule form
+  
   const [rEvent, setREvent] = useState("site_down");
   const [rChannel, setRChannel] = useState("webhook");
   const [rProvider, setRProvider] = useState("");
@@ -102,6 +105,14 @@ export default function NotificationsView({
   const [rCooldown, setRCooldown] = useState("30");
   const [rSecret, setRSecret] = useState("");
   const [showAddRule, setShowAddRule] = useState(false);
+
+  const [rpSite, setRpSite] = useState(sites[0]?.id || "");
+  const [rpProvider, setRpProvider] = useState("");
+  const [rpRecipient, setRpRecipient] = useState("");
+  const [rpFrequency, setRpFrequency] = useState("weekly");
+  const [rpDay, setRpDay] = useState("monday");
+  const [rpHour, setRpHour] = useState("8");
+  const [showAddReport, setShowAddReport] = useState(false);
 
   async function addProvider(e: React.FormEvent) {
     e.preventDefault();
@@ -245,11 +256,86 @@ export default function NotificationsView({
     }
   }
 
-  async function refreshLogs() {
+async function refreshLogs() {
     try {
       setLogs(await apiFetch<NotifLog[]>("/api/notifications/logs", token));
-    } catch {
-      // keep stale logs
+    } catch {}
+  }
+
+  async function addReport(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      const res = await apiFetch<{ id: string }>("/api/notifications/reports", token, {
+        method: "POST",
+        body: JSON.stringify({
+          site_id: rpSite,
+          provider_id: rpProvider,
+          recipient: rpRecipient.trim(),
+          frequency: rpFrequency,
+          day: rpDay,
+          hour: parseInt(rpHour || "8", 10),
+          enabled: true,
+        }),
+      });
+      const site = sites.find((s) => s.id === rpSite);
+      setReports((prev) => [
+        ...prev,
+        {
+          id: res.id,
+          site_id: rpSite,
+          site_name: site?.name || "",
+          domain: site?.domain || "",
+          provider_id: rpProvider,
+          provider_name: providers.find((p) => p.id === rpProvider)?.name || "",
+          recipient: rpRecipient.trim(),
+          frequency: rpFrequency,
+          day: rpDay,
+          hour: parseInt(rpHour || "8", 10),
+          enabled: true,
+          last_sent_at: null,
+        },
+      ]);
+      setRpRecipient("");
+      setShowAddReport(false);
+    } catch (err: any) {
+      setError(err.message);
+    }
+    setBusy(false);
+  }
+
+  async function toggleReport(r: Report) {
+    setError("");
+    try {
+      await apiFetch(`/api/notifications/reports/${r.id}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: !r.enabled }),
+      });
+      setReports((prev) => prev.map((x) => (x.id === r.id ? { ...x, enabled: !x.enabled } : x)));
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  async function testReport(r: Report) {
+    setError("");
+    try {
+      await apiFetch(`/api/notifications/reports/${r.id}/test`, token, { method: "POST" });
+      refreshLogs();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  async function deleteReport(r: Report) {
+    if (!confirm(`Delete the ${r.frequency} report for "${r.site_name}"?`)) return;
+    setError("");
+    try {
+      await apiFetch(`/api/notifications/reports/${r.id}`, token, { method: "DELETE" });
+      setReports((prev) => prev.filter((x) => x.id !== r.id));
+    } catch (err: any) {
+      setError(err.message);
     }
   }
 
@@ -263,7 +349,7 @@ export default function NotificationsView({
         </div>
       )}
 
-      {/* ---------- Providers ---------- */}
+      {}
       <section>
         <div className="mb-3 flex items-center justify-between">
           <div>
@@ -345,7 +431,7 @@ export default function NotificationsView({
         </div>
       </section>
 
-      {/* ---------- Rules ---------- */}
+      {}
       <section>
         <div className="mb-3 flex items-center justify-between">
           <div>
@@ -474,7 +560,118 @@ export default function NotificationsView({
         </div>
       </section>
 
-      {/* ---------- Logs ---------- */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
+              <IconMail className="h-4 w-4 text-indigo-500" /> Scheduled reports
+            </h2>
+            <p className="mt-0.5 text-sm text-faint">
+              Send a 30-day traffic summary by email on a schedule.
+            </p>
+          </div>
+          {sites.length > 0 && providers.length > 0 && (
+            <button onClick={() => setShowAddReport((v) => !v)} className={btnCls}>
+              <span className="flex items-center gap-1.5">
+                <IconPlus className="h-4 w-4" /> {showAddReport ? "Cancel" : "Add report"}
+              </span>
+            </button>
+          )}
+        </div>
+
+        {sites.length === 0 || providers.length === 0 ? (
+          <p className="text-sm text-faint">
+            Create a site and connect an email provider first.
+          </p>
+        ) : (
+          <>
+            {showAddReport && (
+              <form onSubmit={addReport} className="mb-4 space-y-3 rounded-xl border border-edge bg-card p-5">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <select className={inputCls} value={rpSite} onChange={(e) => setRpSite(e.target.value)}>
+                    {sites.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <select className={inputCls} value={rpProvider} onChange={(e) => setRpProvider(e.target.value)} required>
+                    <option value="">Choose provider</option>
+                    {providers.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                  <input className={inputCls} type="email" placeholder="Recipient email" value={rpRecipient} onChange={(e) => setRpRecipient(e.target.value)} required />
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <select className={inputCls} value={rpFrequency} onChange={(e) => setRpFrequency(e.target.value)}>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                  {rpFrequency === "weekly" && (
+                    <select className={inputCls} value={rpDay} onChange={(e) => setRpDay(e.target.value)}>
+                      {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  )}
+                  {rpFrequency === "monthly" && (
+                    <input className={inputCls} type="number" min={1} max={31} placeholder="Day of month" value={rpDay} onChange={(e) => setRpDay(e.target.value)} />
+                  )}
+                  <input className={inputCls} type="number" min={0} max={23} placeholder="Hour (UTC, 0-23)" value={rpHour} onChange={(e) => setRpHour(e.target.value)} />
+                </div>
+                <button type="submit" disabled={busy} className={btnCls}>Save report</button>
+              </form>
+            )}
+
+            <div className="space-y-3">
+              {reports.map((r) => (
+                <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-edge bg-card px-4 py-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-500">
+                    <IconMail className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink">
+                      {r.site_name} — {r.frequency} report
+                      <span className="ml-2 rounded-md bg-raised px-2 py-0.5 text-xs font-normal text-soft">
+                        via {r.provider_name}
+                      </span>
+                    </p>
+                    <p className="truncate text-xs text-faint">
+                      To {r.recipient} · {r.frequency === "daily" ? "every day" : r.frequency === "weekly" ? `every ${r.day}` : `on day ${r.day}`} at {r.hour}:00 UTC
+                      {r.last_sent_at && ` · last sent ${fmtTime(r.last_sent_at)}`}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => toggleReport(r)}
+                    className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${r.enabled ? "bg-indigo-600" : "bg-edge"}`}
+                    title={r.enabled ? "Disable" : "Enable"}
+                  >
+                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${r.enabled ? "left-[18px]" : "left-0.5"}`} />
+                  </button>
+                  <button
+                    title="Send test report"
+                    onClick={() => testReport(r)}
+                    className="rounded-lg px-2 py-1.5 text-xs font-medium text-indigo-500 transition-colors hover:bg-raised"
+                  >
+                    Test now
+                  </button>
+                  <button
+                    title="Delete report"
+                    onClick={() => deleteReport(r)}
+                    className="rounded-lg p-2 text-faint transition-colors hover:bg-raised hover:text-red-500"
+                  >
+                    <IconTrash className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              {reports.length === 0 && (
+                <p className="text-sm text-faint">No scheduled reports yet.</p>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+
       <section>
         <h2 className="mb-3 text-base font-semibold text-ink">Delivery log</h2>
         <div className="overflow-x-auto rounded-xl border border-edge">

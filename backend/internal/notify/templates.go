@@ -2,14 +2,12 @@ package notify
 
 import "fmt"
 
-// Event labels used in emails and webhook payloads.
 var EventLabels = map[string]string{
 	"site_down":     "Site is down",
 	"site_up":       "Site is back online",
 	"traffic_spike": "Traffic spike detected",
 }
 
-// AlertPayload is the JSON body posted to webhooks and embedded in emails.
 type AlertPayload struct {
 	Event     string `json:"event"`
 	SiteID    string `json:"site_id"`
@@ -23,7 +21,6 @@ type AlertPayload struct {
 	Time      string `json:"time"`
 }
 
-// Email builds a styled HTML email body for a payload.
 func Email(p AlertPayload) string {
 	title := EventLabels[p.Event]
 	if title == "" {
@@ -53,7 +50,6 @@ func Email(p AlertPayload) string {
 </div></body></html>`
 }
 
-// EmailSubject builds a subject line for a payload.
 func EmailSubject(p AlertPayload) string {
 	label := EventLabels[p.Event]
 	if label == "" {

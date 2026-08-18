@@ -47,7 +47,7 @@ body {
   scrollbar-color: rgb(var(--edge)) transparent;
 }
 
-/* Recharts theming via CSS so charts follow dark/light mode */
+
 .recharts-cartesian-grid line {
   stroke: var(--grid);
 }
