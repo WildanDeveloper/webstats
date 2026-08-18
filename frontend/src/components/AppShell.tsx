@@ -10,6 +10,7 @@ import {
   IconChart,
   IconUsers,
   IconLogout,
+  IconBell,
 } from "@/components/icons";
 
 function UserMenu({
@@ -62,6 +63,7 @@ export default function AppShell({
   const nav = [
     { href: "/", label: "Dashboard", icon: IconChart, match: (p: string) => p === "/" },
     { href: "/sites", label: "Sites", icon: IconGrid, match: (p: string) => p.startsWith("/sites") },
+    { href: "/notifications", label: "Notifications", icon: IconBell, match: (p: string) => p.startsWith("/notifications") },
     ...(role === "admin"
       ? [{ href: "/admin/users", label: "Users", icon: IconUsers, match: (p: string) => p.startsWith("/admin") }]
       : []),

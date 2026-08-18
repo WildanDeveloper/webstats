@@ -99,3 +99,38 @@ export type Check = {
   latency_ms: number;
   checked_at: string;
 };
+
+export type NotifProvider = {
+  id: string;
+  name: string;
+  kind: string;
+  config: Record<string, any>;
+  from_email: string;
+  created_at: string;
+};
+
+export type NotifRule = {
+  id: string;
+  site_id: string;
+  site_name: string;
+  domain: string;
+  event: string;
+  channel: string;
+  target: string;
+  provider_id: string;
+  provider_name: string;
+  params: Record<string, any>;
+  enabled: boolean;
+  last_sent_at: string | null;
+};
+
+export type NotifLog = {
+  id: number;
+  event: string;
+  channel: string;
+  status: string;
+  detail: string;
+  created_at: string;
+  site_name: string;
+  domain: string;
+};

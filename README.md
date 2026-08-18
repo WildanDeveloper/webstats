@@ -28,6 +28,13 @@ flowchart TD
 - CSV export for any site and period
 - Uptime monitoring: every site is checked every minute, with online/offline
   badges and latency on each site
+- Alerts & notifications: per-site rules for **site down**, **site back
+  online** and **traffic spikes** (last hour vs. 7-day hourly average,
+  threshold + cooldown), delivered by webhook (optional shared secret) or
+  email through your own provider
+- Email providers: SMTP (any host, STARTTLS/SSL — works with Mailtrap sandbox,
+  Gmail, SES, ...), Resend, SendGrid, Mailgun, Postmark and Brevo — you pick
+  the provider per rule, test delivery from the UI, and see a delivery log
 - Multi-site root dashboard with a colored area chart per website
 - Admin panel: manage users and roles (admin/user), reset passwords, delete
   accounts
@@ -99,6 +106,9 @@ flushes batches every 5 seconds / 100 records — the `direct write` path.
 - `GET /api/sites/:id/export` — CSV download
 - All analytics endpoints accept `from` & `to` (YYYY-MM-DD) for custom ranges
 - `GET /api/overview` — root dashboard, multi-site series
+- Notifications: `GET/POST/PATCH/DELETE /api/notifications/providers` (+
+  `POST /:id/test`), `GET/POST/PATCH/DELETE /api/notifications/rules` (+
+  `POST /:id/test`), `GET /api/notifications/logs`
 - Admin only: `GET/POST /api/admin/users`, `PATCH/DELETE /api/admin/users/:id`, `GET /api/admin/stats`
 
 ## Configuration (env)

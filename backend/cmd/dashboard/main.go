@@ -64,6 +64,19 @@ func main() {
 	stats.Get("/world", worldHandler(pool))
 	stats.Get("/export", exportHandler(pool))
 
+	notif := authed.Group("/notifications")
+	notif.Get("/providers", listProvidersHandler(pool))
+	notif.Post("/providers", createProviderHandler(pool))
+	notif.Patch("/providers/:id", updateProviderHandler(pool))
+	notif.Delete("/providers/:id", deleteProviderHandler(pool))
+	notif.Post("/providers/:id/test", testProviderHandler(pool))
+	notif.Get("/rules", listRulesHandler(pool))
+	notif.Post("/rules", createRuleHandler(pool))
+	notif.Patch("/rules/:id", updateRuleHandler(pool))
+	notif.Delete("/rules/:id", deleteRuleHandler(pool))
+	notif.Post("/rules/:id/test", testRuleHandler(pool))
+	notif.Get("/logs", logsHandler(pool))
+
 	admin := authed.Group("/admin", authMgr.AdminOnly())
 	admin.Get("/users", listUsersHandler(pool))
 	admin.Post("/users", createUserHandler(pool, authMgr))
@@ -72,6 +85,7 @@ func main() {
 	admin.Get("/stats", adminStatsHandler(pool))
 
 	go uptimeLoop(ctx, pool)
+	go alertLoop(ctx, pool)
 
 	log.Printf("dashboard API listening on :%s", cfg.Port)
 	log.Fatal(app.Listen(cfg.Bind + ":" + cfg.Port))
