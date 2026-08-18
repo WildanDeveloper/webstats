@@ -1,0 +1,72 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: webstats-db
+    environment:
+      POSTGRES_USER: webstats
+      POSTGRES_PASSWORD: webstats
+      POSTGRES_DB: webstats
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webstats"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: webstats-redis
+    profiles: ["queue"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+  ingest:
+    build: ./backend
+    container_name: webstats-ingest
+    profiles: ["full"]
+    environment:
+      PORT: "8085"
+      DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
+    ports:
+      - "8085:8085"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  dashboard:
+    build: ./backend
+    container_name: webstats-dashboard
+    profiles: ["full"]
+    command: ["/usr/local/bin/dashboard"]
+    environment:
+      PORT: "8086"
+      DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
+      JWT_SECRET: change-me-in-production
+    ports:
+      - "8086:8086"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    container_name: webstats-worker
+    profiles: ["queue"]
+    command: ["/usr/local/bin/worker"]
+    environment:
+      DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  pgdata:
+  redisdata:
