@@ -139,7 +139,7 @@ export default function AdminUsers({
             value={name}
             onChange={(e) => setName(e.target.value)}
             className={`${inputCls} mt-1.5`}
-            placeholder="John Doe"
+            placeholder="Name"
           />
         </div>
         <div className="w-44">

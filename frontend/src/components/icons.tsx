@@ -321,3 +321,34 @@ export function IconMoon({ className }: IconProps) {
     </svg>
   );
 }
+export function IconArrowUp({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  );
+}
+
+export function IconArrowDown({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M12 5v14M19 12l-7 7-7-7" />
+    </svg>
+  );
+}
+
+export function IconDownload({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M12 3v12M7 10l5 5 5-5M4 21h16" />
+    </svg>
+  );
+}
+
+export function IconBolt({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" />
+    </svg>
+  );
+}

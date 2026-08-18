@@ -22,6 +22,12 @@ flowchart TD
 - Tracking script that installs with a single line of HTML
 - Per-site dashboards with visitor trends, top pages, referrers, devices,
   browsers, OS, countries and custom events
+- Realtime panel: visitors and pageviews from the last 5 minutes, auto-refreshing
+- World map of your visitors (with optional GeoIP lookup)
+- Custom date ranges (from/to) and comparison badges against the previous period
+- CSV export for any site and period
+- Uptime monitoring: every site is checked every minute, with online/offline
+  badges and latency on each site
 - Multi-site root dashboard with a colored area chart per website
 - Admin panel: manage users and roles (admin/user), reset passwords, delete
   accounts
@@ -87,13 +93,19 @@ flushes batches every 5 seconds / 100 records — the `direct write` path.
 - `POST /api/auth/login|logout`, `GET /api/auth/me` — JWT
 - `GET/POST/PATCH/DELETE /api/sites`, `GET /api/sites/:id/ssl-check`
 - `GET /api/sites/:id/overview|timeseries|pages|referrers|devices|browsers|os|countries|events?period=24h|7d|30d|all`
+- `GET /api/sites/:id/realtime` — last 5 minutes
+- `GET /api/sites/:id/world` — country counts with coordinates
+- `GET /api/sites/:id/checks` — uptime check history
+- `GET /api/sites/:id/export` — CSV download
+- All analytics endpoints accept `from` & `to` (YYYY-MM-DD) for custom ranges
 - `GET /api/overview` — root dashboard, multi-site series
 - Admin only: `GET/POST /api/admin/users`, `PATCH/DELETE /api/admin/users/:id`, `GET /api/admin/stats`
 
 ## Configuration (env)
 
 `DATABASE_URL`, `JWT_SECRET`, `REDIS_URL`, `GEO_CSV` (GeoLite2-Country CSV,
-optional), `IP_HASH_SALT`, `PORT`, `FLUSH_EVERY`, `BATCH_SIZE`, `ALLOW_ORIGINS`.
+optional; a sample is at `backend/data/sample-geo.csv`), `IP_HASH_SALT`,
+`PORT`, `FLUSH_EVERY`, `BATCH_SIZE`, `ALLOW_ORIGINS`.
 Frontend: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_TRACKER_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`.
 
 ## Privacy

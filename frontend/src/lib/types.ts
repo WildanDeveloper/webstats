@@ -6,6 +6,9 @@ export type Site = {
   site_key: string;
   color: string;
   created_at: string;
+  status?: string;
+  latency_ms?: number;
+  checked_at?: string;
 };
 
 export type User = {
@@ -23,6 +26,8 @@ export type Overview = {
   bounces: number;
   bounce_rate: number;
   avg_per_day: number;
+  prev_pageviews: number;
+  prev_visitors: number;
 };
 
 export type TimePoint = {
@@ -71,4 +76,26 @@ export type AdminStats = {
   sites: number;
   pageviews: number;
   events: number;
+};
+
+export type Realtime = {
+  visitors: number;
+  pageviews: number;
+  pages: Row[];
+  countries: Row[];
+};
+
+export type WorldPoint = {
+  country: string;
+  count: number;
+  lat: number;
+  lng: number;
+};
+
+export type Check = {
+  id: number;
+  site_id: string;
+  status: string;
+  latency_ms: number;
+  checked_at: string;
 };

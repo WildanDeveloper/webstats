@@ -19,15 +19,20 @@ type Site struct {
 	SiteKey   string    `json:"site_key"`
 	Color     string    `json:"color"`
 	CreatedAt time.Time `json:"created_at"`
+	Status    string    `json:"status,omitempty"`
+	LatencyMs int64     `json:"latency_ms,omitempty"`
+	CheckedAt time.Time `json:"checked_at,omitempty"`
 }
 
 type Overview struct {
-	Pageviews  int64   `json:"pageviews"`
-	Visitors   int64   `json:"visitors"`
-	Sessions   int64   `json:"sessions"`
-	Bounces    int64   `json:"bounces"`
-	BounceRate float64 `json:"bounce_rate"`
-	AvgPerDay  float64 `json:"avg_per_day"`
+	Pageviews     int64   `json:"pageviews"`
+	Visitors      int64   `json:"visitors"`
+	Sessions      int64   `json:"sessions"`
+	Bounces       int64   `json:"bounces"`
+	BounceRate    float64 `json:"bounce_rate"`
+	AvgPerDay     float64 `json:"avg_per_day"`
+	PrevPageviews int64   `json:"prev_pageviews"`
+	PrevVisitors  int64   `json:"prev_visitors"`
 }
 
 type TimePoint struct {
@@ -41,7 +46,30 @@ type Row struct {
 	Value int64  `json:"value"`
 }
 
+type WorldPoint struct {
+	Country string  `json:"country"`
+	Count   int64   `json:"count"`
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+}
+
 type EventRow struct {
-	Name  string `json:"name"`
-	Count int64  `json:"count"`
+	Name   string `json:"name"`
+	Count  int64  `json:"count"`
+	LastAt string `json:"last_at"`
+}
+
+type Realtime struct {
+	Visitors  int64 `json:"visitors"`
+	Pageviews int64 `json:"pageviews"`
+	Pages     []Row `json:"pages"`
+	Countries []Row `json:"countries"`
+}
+
+type Check struct {
+	ID        int64     `json:"id"`
+	SiteID    string    `json:"site_id"`
+	Status    string    `json:"status"`
+	LatencyMs int64     `json:"latency_ms"`
+	CheckedAt time.Time `json:"checked_at"`
 }

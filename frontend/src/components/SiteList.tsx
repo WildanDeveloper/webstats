@@ -13,6 +13,8 @@ import {
   IconChart,
   IconCode,
   IconSettings,
+  IconShieldCheck,
+  IconShieldX,
 } from "@/components/icons";
 
 const trackerUrl =
@@ -163,6 +165,22 @@ export default function SiteList({
                         <span className="rounded-full border border-edge px-2 py-0.5 text-[11px] text-faint">
                           {site.domain || "no domain"}
                         </span>
+                        {site.status && (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                              site.status === "up"
+                                ? "bg-emerald-500/10 text-emerald-500"
+                                : "bg-red-950/60 text-red-400"
+                            }`}
+                          >
+                            {site.status === "up" ? (
+                              <IconShieldCheck className="h-3 w-3" />
+                            ) : (
+                              <IconShieldX className="h-3 w-3" />
+                            )}
+                            {site.status === "up" ? "Online" : "Offline"}
+                          </span>
+                        )}
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <code className="truncate rounded-md border border-edge bg-raised px-2.5 py-1.5 font-mono text-xs text-soft">

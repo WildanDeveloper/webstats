@@ -1,8 +1,13 @@
 package analytics
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
+	"strconv"
 	"time"
+
+	"github.com/webstats/backend/internal/geo"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -112,7 +117,17 @@ func siteOwned(ctx context.Context, db *pgxpool.Pool, userID, siteID string) (bo
 }
 
 // PeriodBounds returns the from/to window and bucket granularity for a period.
-func PeriodBounds(period string) (from time.Time, to time.Time, hourly bool) {
+// Optional from/to override (YYYY-MM-DD or YYYY-MM-DD HH:MM, UTC) for custom ranges.
+func PeriodBounds(period, fromStr, toStr string) (from time.Time, to time.Time, hourly bool) {
+	if fromStr != "" && toStr != "" {
+		for _, layout := range []string{"2006-01-02 15:04", "2006-01-02"} {
+			if f, err := time.Parse(layout, fromStr); err == nil {
+				if t, err2 := time.Parse(layout, toStr); err2 == nil {
+					return f.UTC(), t.UTC().Add(24 * time.Hour), false
+				}
+			}
+		}
+	}
 	to = time.Now().UTC()
 	switch period {
 	case "24h", "today":
@@ -128,15 +143,16 @@ func PeriodBounds(period string) (from time.Time, to time.Time, hourly bool) {
 	return from, to, hourly
 }
 
-func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID, period string) (model.Overview, error) {
+func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) (model.Overview, error) {
 	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
 		return model.Overview{}, err
 	} else if !ok {
 		return model.Overview{}, pgx.ErrNoRows
 	}
-	from, to, _ := PeriodBounds(period)
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
 
 	var out model.Overview
+	prevFrom := from.Add(-(to.Sub(from)))
 	err := db.QueryRow(ctx, `
 		WITH s AS (
 			SELECT session_id, count(*) AS c
@@ -147,8 +163,10 @@ func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID
 		SELECT
 			(SELECT count(*) FROM pageviews WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3),
 			(SELECT count(*) FROM s),
-			(SELECT count(*) FROM s WHERE c = 1)`,
-		siteID, from, to).Scan(&out.Pageviews, &out.Sessions, &out.Bounces)
+			(SELECT count(*) FROM s WHERE c = 1),
+			(SELECT count(*) FROM pageviews WHERE site_id = $1 AND visited_at >= $4 AND visited_at < $2),
+			(SELECT count(DISTINCT session_id) FROM pageviews WHERE site_id = $1 AND visited_at >= $4 AND visited_at < $2)`,
+		siteID, from, to, prevFrom).Scan(&out.Pageviews, &out.Sessions, &out.Bounces, &out.PrevPageviews, &out.PrevVisitors)
 	if err != nil {
 		return out, err
 	}
@@ -163,13 +181,13 @@ func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID
 	return out, nil
 }
 
-func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, siteID, period string) ([]model.TimePoint, error) {
+func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) ([]model.TimePoint, error) {
 	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
 	}
-	from, to, hourly := PeriodBounds(period)
+	from, to, hourly := PeriodBounds(period, fromStr, toStr)
 	trunc, fmt := "day", "YYYY-MM-DD"
 	if hourly {
 		trunc, fmt = "hour", "YYYY-MM-DD HH24:00"
@@ -196,13 +214,13 @@ func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, site
 	return out, rows.Err()
 }
 
-func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, column string, limit int) ([]model.Row, error) {
+func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, column string, limit int, fromStr, toStr string) ([]model.Row, error) {
 	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
 	}
-	from, to, _ := PeriodBounds(period)
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
 	order := "count(*) DESC"
 	if column == "referrer" {
 		column = "referrer_host"
@@ -216,7 +234,7 @@ func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, per
 		SELECT COALESCE(NULLIF(` + column + `, ''), ` + fill + `) AS key, count(*)
 		FROM pageviews
 		WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3
-		GROUP BY ` + column + ` ORDER BY ` + order + ` LIMIT ` + itoa(limit)
+		GROUP BY ` + column + ` ORDER BY ` + order + ` LIMIT ` + itoa(int64(limit))
 	rows, err := db.Query(ctx, sql, siteID, from, to)
 	if err != nil {
 		return nil, err
@@ -233,13 +251,13 @@ func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, per
 	return out, rows.Err()
 }
 
-func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteID, period string) ([]model.EventRow, error) {
+func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) ([]model.EventRow, error) {
 	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
 	}
-	from, to, _ := PeriodBounds(period)
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
 	rows, err := db.Query(ctx, `
 		SELECT name, count(*) FROM events
 		WHERE site_id = $1 AND created_at >= $2 AND created_at < $3
@@ -276,8 +294,162 @@ type RootOverview struct {
 }
 
 // RootOverview aggregates the current user's sites for the dashboard chart.
-func (q *Queries) RootOverview(ctx context.Context, db *pgxpool.Pool, userID, period string) (RootOverview, error) {
-	from, to, hourly := PeriodBounds(period)
+func (q *Queries) Realtime(ctx context.Context, db *pgxpool.Pool, userID, siteID string) (model.Realtime, error) {
+	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
+		return model.Realtime{}, err
+	} else if !ok {
+		return model.Realtime{}, pgx.ErrNoRows
+	}
+	cut := time.Now().UTC().Add(-5 * time.Minute)
+	var out model.Realtime
+	err := db.QueryRow(ctx, `
+		SELECT count(DISTINCT session_id), count(*)
+		FROM pageviews WHERE site_id = $1 AND visited_at >= $2`,
+		siteID, cut).Scan(&out.Visitors, &out.Pageviews)
+	if err != nil {
+		return out, err
+	}
+	rows, err := db.Query(ctx, `
+		SELECT COALESCE(path, '/'), count(*) FROM pageviews
+		WHERE site_id = $1 AND visited_at >= $2 GROUP BY 1 ORDER BY 2 DESC LIMIT 5`, siteID, cut)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	out.Pages = make([]model.Row, 0)
+	for rows.Next() {
+		var r model.Row
+		if err := rows.Scan(&r.Key, &r.Value); err != nil {
+			return out, err
+		}
+		out.Pages = append(out.Pages, r)
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	rows, err = db.Query(ctx, `
+		SELECT COALESCE(country, 'unknown'), count(*) FROM pageviews
+		WHERE site_id = $1 AND visited_at >= $2 GROUP BY 1 ORDER BY 2 DESC LIMIT 5`, siteID, cut)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	out.Countries = make([]model.Row, 0)
+	for rows.Next() {
+		var r model.Row
+		if err := rows.Scan(&r.Key, &r.Value); err != nil {
+			return out, err
+		}
+		out.Countries = append(out.Countries, r)
+	}
+	return out, rows.Err()
+}
+
+func (q *Queries) LatestChecks(ctx context.Context, db *pgxpool.Pool, userID, siteID string, limit int) ([]model.Check, error) {
+	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, pgx.ErrNoRows
+	}
+	rows, err := db.Query(ctx, `
+		SELECT id, site_id, status, latency_ms, checked_at
+		FROM site_checks WHERE site_id = $1 ORDER BY checked_at DESC LIMIT $2`, siteID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.Check, 0)
+	for rows.Next() {
+		var c model.Check
+		if err := rows.Scan(&c.ID, &c.SiteID, &c.Status, &c.LatencyMs, &c.CheckedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (q *Queries) World(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) ([]model.WorldPoint, error) {
+	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, pgx.ErrNoRows
+	}
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	rows, err := db.Query(ctx, `
+		SELECT COALESCE(NULLIF(country, ''), 'unknown'), count(*)
+		FROM pageviews
+		WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3
+		GROUP BY 1 ORDER BY 2 DESC`, siteID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.WorldPoint, 0)
+	for rows.Next() {
+		var cc string
+		var n int64
+		if err := rows.Scan(&cc, &n); err != nil {
+			return nil, err
+		}
+		if cc == "unknown" || cc == "" {
+			continue
+		}
+		lat, lng := geo.LatLng(cc)
+		if lat == 0 && lng == 0 {
+			continue
+		}
+		out = append(out, model.WorldPoint{Country: cc, Count: n, Lat: lat, Lng: lng})
+	}
+	return out, rows.Err()
+}
+
+func (q *Queries) ExportCSV(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) ([]byte, error) {
+	if ok, err := siteOwned(ctx, db, userID, siteID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, pgx.ErrNoRows
+	}
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	writeSection := func(title string, header []string, rows [][]string) {
+		w.Write([]string{title})
+		w.Write(header)
+		for _, r := range rows {
+			w.Write(r)
+		}
+		w.Write([]string{})
+	}
+	times, err := q.Timeseries(ctx, db, userID, siteID, period, fromStr, toStr)
+	if err != nil {
+		return nil, err
+	}
+	tr := make([][]string, 0, len(times))
+	for _, p := range times {
+		tr = append(tr, []string{p.Date, itoa(p.Pageviews), itoa(p.Visitors)})
+	}
+	writeSection("Timeseries", []string{"date", "pageviews", "visitors"}, tr)
+
+	for _, def := range []struct{ col, title string }{
+		{"path", "Top pages"}, {"referrer", "Referrers"}, {"country", "Countries"},
+		{"device", "Devices"}, {"browser", "Browsers"}, {"os", "OS"},
+	} {
+		top, err := q.Top(ctx, db, userID, siteID, period, def.col, 500, fromStr, toStr)
+		if err != nil {
+			return nil, err
+		}
+		tr := make([][]string, 0, len(top))
+		for _, r := range top {
+			tr = append(tr, []string{r.Key, itoa(r.Value)})
+		}
+		writeSection(def.title, []string{"key", "count"}, tr)
+	}
+	w.Flush()
+	return buf.Bytes(), w.Error()
+}
+
+func (q *Queries) RootOverview(ctx context.Context, db *pgxpool.Pool, userID, period, fromStr, toStr string) (RootOverview, error) {
+	from, to, hourly := PeriodBounds(period, fromStr, toStr)
 	trunc, sqlLayout := "day", "YYYY-MM-DD"
 	if hourly {
 		trunc, sqlLayout = "hour", "YYYY-MM-DD HH24:00"
@@ -370,16 +542,6 @@ type Queries struct{}
 
 var Q = &Queries{}
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [12]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
+func itoa(n int64) string {
+	return strconv.FormatInt(n, 10)
 }

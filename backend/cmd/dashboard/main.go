@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
+	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/webstats/backend/internal/auth"
 	"github.com/webstats/backend/internal/config"
 	"github.com/webstats/backend/internal/db"
@@ -54,6 +59,10 @@ func main() {
 	stats.Get("/os", topHandler(pool, "os"))
 	stats.Get("/countries", topHandler(pool, "country"))
 	stats.Get("/events", eventsHandler(pool))
+	stats.Get("/realtime", realtimeHandler(pool))
+	stats.Get("/checks", checksHandler(pool))
+	stats.Get("/world", worldHandler(pool))
+	stats.Get("/export", exportHandler(pool))
 
 	admin := authed.Group("/admin", authMgr.AdminOnly())
 	admin.Get("/users", listUsersHandler(pool))
@@ -62,6 +71,60 @@ func main() {
 	admin.Delete("/users/:id", deleteUserHandler(pool))
 	admin.Get("/stats", adminStatsHandler(pool))
 
+	go uptimeLoop(ctx, pool)
+
 	log.Printf("dashboard API listening on :%s", cfg.Port)
 	log.Fatal(app.Listen(":" + cfg.Port))
+}
+
+func uptimeLoop(ctx context.Context, pool *pgxpool.Pool) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	ticker := time.NewTicker(60 * time.Second)
+	run := func() {
+		rows, err := pool.Query(ctx, `SELECT id, domain FROM sites WHERE domain <> ''`)
+		if err != nil {
+			return
+		}
+		type site struct{ id, domain string }
+		var sites []site
+		for rows.Next() {
+			var s site
+			if rows.Scan(&s.id, &s.domain) == nil {
+				sites = append(sites, s)
+			}
+		}
+		rows.Close()
+		for _, s := range sites {
+			url := "https://" + s.domain
+			if !strings.Contains(s.domain, ".") {
+				url = "http://" + s.domain
+			}
+			start := time.Now()
+			resp, err := client.Get(url)
+			status := "down"
+			latency := time.Since(start).Milliseconds()
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode < 500 {
+					status = "up"
+				}
+			}
+			pool.Exec(ctx, `INSERT INTO site_checks (site_id, status, latency_ms) VALUES ($1, $2, $3)`,
+				s.id, status, latency)
+		}
+	}
+	run()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }

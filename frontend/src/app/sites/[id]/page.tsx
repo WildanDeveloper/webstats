@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions, apiFetch } from "@/lib/auth";
-import type { Overview, TimePoint, Row, EventRow, Site } from "@/lib/types";
+import type { Overview, TimePoint, Row, EventRow, Site, WorldPoint } from "@/lib/types";
 import AppShell from "@/components/AppShell";
 import StatsView from "@/components/StatsView";
 
@@ -12,13 +12,15 @@ export default async function SitePage({
   searchParams,
 }: {
   params: { id: string };
-  searchParams: { period?: string };
+  searchParams: { period?: string; from?: string; to?: string };
 }) {
   const session = await getServerSession(authOptions);
   if (!session?.token) redirect("/login");
 
   const period = searchParams.period || "7d";
-  const q = `period=${period}`;
+  const from = searchParams.from || "";
+  const to = searchParams.to || "";
+  const q = from && to ? `from=${from}&to=${to}` : `period=${period}`;
 
   let site: Site | null = null;
   let overview: Overview | null = null;
@@ -30,10 +32,11 @@ export default async function SitePage({
   let os: Row[] = [];
   let countries: Row[] = [];
   let events: EventRow[] = [];
+  let world: WorldPoint[] = [];
   let error = "";
 
   try {
-    [site, overview, timeseries, pages, referrers, devices, browsers, os, countries, events] =
+    [site, overview, timeseries, pages, referrers, devices, browsers, os, countries, events, world] =
       await Promise.all([
         apiFetch<Site>(`/api/sites/${params.id}`, session.token),
         apiFetch<Overview>(`/api/sites/${params.id}/overview?${q}`, session.token),
@@ -45,6 +48,7 @@ export default async function SitePage({
         apiFetch<Row[]>(`/api/sites/${params.id}/os?${q}`, session.token),
         apiFetch<Row[]>(`/api/sites/${params.id}/countries?${q}`, session.token),
         apiFetch<EventRow[]>(`/api/sites/${params.id}/events?${q}`, session.token),
+        apiFetch<WorldPoint[]>(`/api/sites/${params.id}/world?${q}`, session.token),
       ]);
   } catch (e: any) {
     error = e.message || "Failed to load data";
@@ -59,7 +63,11 @@ export default async function SitePage({
       <div className="mx-auto max-w-6xl px-6 py-8 lg:px-10">
         <StatsView
           site={site}
+          siteId={params.id}
+          token={session.token}
           period={period}
+          from={from}
+          to={to}
           overview={overview}
           timeseries={timeseries}
           pages={pages}
@@ -69,6 +77,7 @@ export default async function SitePage({
           os={os}
           countries={countries}
           events={events}
+          world={world}
           error={error}
         />
       </div>
