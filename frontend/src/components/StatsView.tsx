@@ -11,6 +11,7 @@ import type {
   FunnelStep,
   Goal,
   GoalSummary,
+  Insights,
   Overview,
   Row,
   Site,
@@ -33,6 +34,7 @@ import {
   IconTrash,
   IconShieldCheck,
   IconShieldX,
+  IconSparkles,
 } from "@/components/icons";
 
 const PERIODS = [
@@ -92,6 +94,7 @@ export default function StatsView(props: {
   site: Site | null;
   siteId: string;
   token: string;
+  publicToken?: string;
   period: string;
   from: string;
   to: string;
@@ -108,23 +111,37 @@ export default function StatsView(props: {
   world: WorldPoint[];
   campaigns: Campaign[];
   goals: GoalSummary[];
+  insights: Insights | null;
+  funnelReport: FunnelStep[];
   error: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { siteId, token, period, from, to, filters } = props;
+  const { siteId, token, period, from, to, filters, publicToken = "" } = props;
+  const isPublic = publicToken.length > 0;
+  const basePath = isPublic ? `/api/public/${publicToken}` : `/api/sites/${siteId}`;
   const [fromD, setFromD] = useState(from);
   const [toD, setToD] = useState(to);
   const [goals, setGoals] = useState(props.goals);
   const [goalName, setGoalName] = useState("");
   const [goalPath, setGoalPath] = useState("");
   const [goalMatch, setGoalMatch] = useState("contains");
-  const [funnelInput, setFunnelInput] = useState("");
-  const [funnel, setFunnel] = useState<FunnelStep[]>([]);
   const [goalMsg, setGoalMsg] = useState("");
   const [openEvent, setOpenEvent] = useState("");
   const [occurrences, setOccurrences] = useState<EventOccurrence[]>([]);
   const [evMsg, setEvMsg] = useState("");
+  const [funnel, setFunnel] = useState<FunnelStep[]>(props.funnelReport || []);
+
+  async function pubGet<T>(path: string, qs = "") {
+    if (isPublic) {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${basePath}${path}${qs}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("request failed");
+      return (await res.json()) as T;
+    }
+    return apiFetch<T>(`${basePath}${path}${qs}`, token);
+  }
 
   function baseQ() {
     const parts: string[] = [];
@@ -194,9 +211,8 @@ export default function StatsView(props: {
     setOpenEvent(name);
     setOccurrences([]);
     try {
-      const res = await apiFetch<EventOccurrence[]>(
-        `/api/sites/${siteId}/events/${encodeURIComponent(name)}?${baseQ()}`,
-        token,
+      const res = await pubGet<EventOccurrence[]>(
+        `/events/${encodeURIComponent(name)}?${baseQ()}`,
       );
       setOccurrences(res);
     } catch (err: any) {
@@ -262,35 +278,6 @@ export default function StatsView(props: {
     }
   }
 
-  async function runFunnel(e: React.FormEvent) {
-    e.preventDefault();
-    setGoalMsg("");
-    const paths = funnelInput.split(",").map((p) => p.trim()).filter(Boolean);
-    if (paths.length < 2) {
-      setGoalMsg("Enter at least 2 paths separated by commas");
-      return;
-    }
-    try {
-      const qs = new URLSearchParams();
-      if (from && to) {
-        qs.set("from", from);
-        qs.set("to", to);
-      } else {
-        qs.set("period", period);
-      }
-      for (const [k, v] of Object.entries(filters)) {
-        if (v) qs.set(k, v);
-      }
-      const res = await apiFetch<{ steps: FunnelStep[] }>(`/api/sites/${siteId}/funnel?${qs.toString()}`, token, {
-        method: "POST",
-        body: JSON.stringify({ paths }),
-      });
-      setFunnel(res.steps);
-    } catch (err: any) {
-      setGoalMsg(err.message);
-    }
-  }
-
   const maxFunnel = funnel.length ? Math.max(...funnel.map((f) => f.sessions)) : 0;
 
   return (
@@ -304,13 +291,15 @@ export default function StatsView(props: {
             <IconArrowLeft className="h-3.5 w-3.5" />
             Dashboard
           </Link>
-          <Link
-            href={`/sites/${props.site?.id}/settings`}
-            className="inline-flex items-center gap-1.5 text-sm text-faint transition-colors hover:text-ink"
-          >
-            <IconSettings className="h-3.5 w-3.5" />
-            Settings
-          </Link>
+          {!isPublic && (
+            <Link
+              href={`/sites/${props.site?.id}/settings`}
+              className="inline-flex items-center gap-1.5 text-sm text-faint transition-colors hover:text-ink"
+            >
+              <IconSettings className="h-3.5 w-3.5" />
+              Settings
+            </Link>
+          )}
         </div>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -350,14 +339,16 @@ export default function StatsView(props: {
                 Apply
               </button>
             </div>
-            <button
-              onClick={exportCsv}
-              title="Export CSV"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-card px-3 py-1.5 text-xs font-medium text-soft transition-colors hover:text-ink"
-            >
-              <IconDownload className="h-3.5 w-3.5" />
-              CSV
-            </button>
+            {!isPublic && (
+              <button
+                onClick={exportCsv}
+                title="Export CSV"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-card px-3 py-1.5 text-xs font-medium text-soft transition-colors hover:text-ink"
+              >
+                <IconDownload className="h-3.5 w-3.5" />
+                CSV
+              </button>
+            )}
             <div className="flex rounded-lg border border-edge bg-card p-1">
               {PERIODS.map((p) => (
                 <button
@@ -406,7 +397,24 @@ export default function StatsView(props: {
             </div>
           )}
 
-          <RealtimePanel token={token} siteId={siteId} />
+          {!isPublic && <RealtimePanel token={token} siteId={siteId} />}
+
+          {props.insights && (
+            <section className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-5">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <IconSparkles className="h-4 w-4 text-indigo-400" />
+                Insights
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-soft">{props.insights.summary}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {props.insights.highlights.map((h, i) => (
+                  <span key={i} className="rounded-lg border border-edge bg-card px-2.5 py-1.5 text-xs text-soft">
+                    <span className="font-medium text-ink">{h.title}:</span> {h.text}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
 
           <StatCards
             pageviews={props.overview?.pageviews ?? 0}
@@ -529,19 +537,8 @@ export default function StatsView(props: {
                   <p className="text-xs text-faint">No goals yet. Add one above.</p>
                 )}
               </div>
-              <form onSubmit={runFunnel} className="flex flex-wrap items-center gap-2 border-t border-edge pt-3">
-                <input
-                  className="min-w-56 flex-1 rounded-lg border border-edge bg-bg px-3 py-1.5 text-sm text-ink outline-none focus:border-indigo-500"
-                  placeholder="Funnel paths, e.g. /landing, /pricing, /thank-you"
-                  value={funnelInput}
-                  onChange={(e) => setFunnelInput(e.target.value)}
-                />
-                <button className="rounded-lg bg-raised px-3 py-1.5 text-sm font-medium text-ink hover:bg-soft/40">
-                  Analyze
-                </button>
-              </form>
               {funnel.length > 0 && (
-                <div className="space-y-1.5">
+                <div className="mt-3 space-y-1.5">
                   {funnel.map((f, i) => (
                     <div key={i} className="flex items-center gap-2">
                       <span className="w-32 truncate text-xs text-soft" title={f.path}>{f.path}</span>

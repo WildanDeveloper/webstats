@@ -156,7 +156,15 @@ func AggregateDaily(ctx context.Context, db *pgxpool.Pool, siteID string, from, 
 	return err
 }
 
-func siteAccess(ctx context.Context, db *pgxpool.Pool, userID, siteID string) (bool, error) {
+func siteAccess(ctx context.Context, db *pgxpool.Pool, userID, siteID, publicToken string) (bool, error) {
+	if publicToken != "" {
+		var ok bool
+		err := db.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM sites WHERE id = $1 AND public_token = $2 AND public_enabled
+			)`, siteID, publicToken).Scan(&ok)
+		return ok, err
+	}
 	var ok bool
 	err := db.QueryRow(ctx, `
 		SELECT EXISTS(
@@ -193,7 +201,7 @@ func PeriodBounds(period, fromStr, toStr string) (from time.Time, to time.Time, 
 }
 
 func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) (model.Overview, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return model.Overview{}, err
 	} else if !ok {
 		return model.Overview{}, pgx.ErrNoRows
@@ -234,7 +242,7 @@ func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID
 }
 
 func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) ([]model.TimePoint, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -322,7 +330,7 @@ func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, site
 }
 
 func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, column string, limit int, fromStr, toStr string, f Filters) ([]model.Row, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -362,7 +370,7 @@ func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, per
 }
 
 func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) ([]model.EventRow, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -404,7 +412,7 @@ type RootOverview struct {
 }
 
 func (q *Queries) Realtime(ctx context.Context, db *pgxpool.Pool, userID, siteID string) (model.Realtime, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return model.Realtime{}, err
 	} else if !ok {
 		return model.Realtime{}, pgx.ErrNoRows
@@ -455,7 +463,7 @@ func (q *Queries) Realtime(ctx context.Context, db *pgxpool.Pool, userID, siteID
 }
 
 func (q *Queries) LatestChecks(ctx context.Context, db *pgxpool.Pool, userID, siteID string, limit int) ([]model.Check, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -479,7 +487,7 @@ func (q *Queries) LatestChecks(ctx context.Context, db *pgxpool.Pool, userID, si
 }
 
 func (q *Queries) World(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) ([]model.WorldPoint, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -517,7 +525,7 @@ func (q *Queries) World(ctx context.Context, db *pgxpool.Pool, userID, siteID, p
 }
 
 func (q *Queries) ExportCSV(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) ([]byte, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -669,7 +677,7 @@ type Campaign struct {
 }
 
 func (q *Queries) Campaigns(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) ([]Campaign, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -721,7 +729,7 @@ type GoalSummary struct {
 }
 
 func (q *Queries) Goals(ctx context.Context, db *pgxpool.Pool, userID, siteID string) ([]Goal, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -745,7 +753,7 @@ func (q *Queries) Goals(ctx context.Context, db *pgxpool.Pool, userID, siteID st
 }
 
 func (q *Queries) GoalSummaries(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) ([]GoalSummary, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -798,7 +806,7 @@ func (q *Queries) Funnel(ctx context.Context, db *pgxpool.Pool, userID, siteID, 
 	if len(paths) == 0 {
 		return out, nil
 	}
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return out, err
 	} else if !ok {
 		return out, pgx.ErrNoRows
@@ -835,7 +843,7 @@ func (q *Queries) Funnel(ctx context.Context, db *pgxpool.Pool, userID, siteID, 
 }
 
 func (q *Queries) EventDetails(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) ([]model.EventDetail, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -866,7 +874,7 @@ func (q *Queries) EventDetails(ctx context.Context, db *pgxpool.Pool, userID, si
 }
 
 func (q *Queries) EventOccurrences(ctx context.Context, db *pgxpool.Pool, userID, siteID, name, period, fromStr, toStr string, limit int) ([]model.EventOccurrence, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID); err != nil {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows

@@ -252,12 +252,15 @@ func getSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var s model.SiteSettings
 		err := db.QueryRow(c.Context(), `
-			SELECT site_id, ip_hashing, retention_days FROM site_settings
-			WHERE site_id = $1 AND (
-				$2::uuid IN (SELECT user_id FROM sites WHERE id = site_settings.site_id)
-				OR $2::uuid IN (SELECT user_id FROM site_members WHERE site_id = site_settings.site_id)
+			SELECT ss.site_id, ss.ip_hashing, ss.retention_days,
+			       COALESCE(s.public_token, ''), COALESCE(s.public_enabled, false)
+			FROM site_settings ss
+			JOIN sites s ON s.id = ss.site_id
+			WHERE ss.site_id = $1 AND (
+				$2::uuid IN (SELECT user_id FROM sites WHERE id = ss.site_id)
+				OR $2::uuid IN (SELECT user_id FROM site_members WHERE site_id = ss.site_id)
 			)`, c.Params("id"), auth.UserID(c)).
-			Scan(&s.SiteID, &s.IPHashing, &s.RetentionDays)
+			Scan(&s.SiteID, &s.IPHashing, &s.RetentionDays, &s.PublicToken, &s.PublicEnabled)
 		if err != nil {
 			return errJSON(c, 404, "site not found")
 		}
@@ -268,8 +271,10 @@ func getSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 func updateSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var in struct {
-			IPHashing     *bool `json:"ip_hashing"`
-			RetentionDays *int  `json:"retention_days"`
+			IPHashing     *bool   `json:"ip_hashing"`
+			RetentionDays *int    `json:"retention_days"`
+			PublicToken   *string `json:"public_token"`
+			PublicEnabled *bool   `json:"public_enabled"`
 		}
 		if err := c.BodyParser(&in); err != nil {
 			return errJSON(c, 400, "bad json")
@@ -282,6 +287,9 @@ func updateSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 		if in.RetentionDays != nil && (*in.RetentionDays < 0 || *in.RetentionDays > 730) {
 			return errJSON(c, 400, "retention days must be between 0 and 730")
 		}
+		if in.PublicToken != nil && *in.PublicToken == "" {
+			return errJSON(c, 400, "invalid token")
+		}
 		_, err := db.Exec(c.Context(), `
 			INSERT INTO site_settings (site_id, ip_hashing, retention_days)
 			VALUES ($1, COALESCE($2, true), COALESCE($3, 0))
@@ -291,6 +299,29 @@ func updateSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 			siteID, in.IPHashing, in.RetentionDays)
 		if err != nil {
 			return errJSON(c, 500, "update failed")
+		}
+		if in.PublicToken != nil || in.PublicEnabled != nil {
+			tok := in.PublicToken
+			if tok == nil {
+				tok = new(string)
+				if err := db.QueryRow(c.Context(), `
+					SELECT COALESCE(public_token, '') FROM sites WHERE id = $1`, siteID).Scan(tok); err != nil {
+					return errJSON(c, 500, "query failed")
+				}
+			}
+			enabled := in.PublicEnabled
+			if enabled == nil {
+				enabled = new(bool)
+				if err := db.QueryRow(c.Context(), `
+					SELECT public_enabled FROM sites WHERE id = $1`, siteID).Scan(enabled); err != nil {
+					return errJSON(c, 500, "query failed")
+				}
+			}
+			if _, err := db.Exec(c.Context(), `
+				UPDATE sites SET public_token = $1, public_enabled = $2 WHERE id = $3`,
+				*tok, *enabled, siteID); err != nil {
+				return errJSON(c, 500, "update failed")
+			}
 		}
 		return getSettingsHandler(db)(c)
 	}

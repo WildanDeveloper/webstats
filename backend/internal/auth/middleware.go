@@ -8,6 +8,9 @@ import (
 
 func (m *Manager) Middleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		if uid, ok := c.Locals("uid").(string); ok && uid != "" {
+			return c.Next()
+		}
 		h := c.Get("Authorization")
 		if h == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing token"})

@@ -4,7 +4,9 @@ import { authOptions, apiFetch } from "@/lib/auth";
 import type {
   Campaign,
   EventDetail,
+  FunnelStep,
   GoalSummary,
+  Insights,
   Overview,
   Row,
   Site,
@@ -71,6 +73,8 @@ export default async function SitePage({
   let world: WorldPoint[] = [];
   let campaigns: Campaign[] = [];
   let goals: GoalSummary[] = [];
+  let insights: Insights | null = null;
+  let funnelReport: FunnelStep[] = [];
   let error = "";
 
   try {
@@ -90,6 +94,15 @@ export default async function SitePage({
         apiFetch<Campaign[]>(`/api/sites/${params.id}/campaigns?${q}`, session.token),
         apiFetch<GoalSummary[]>(`/api/sites/${params.id}/goals/summary?${q}`, session.token),
       ]);
+    const [ins, fr] = await Promise.all([
+      apiFetch<Insights>(`/api/sites/${params.id}/insights?${q}`, session.token).catch(() => null),
+      apiFetch<{ steps: string[]; report: { steps: FunnelStep[] } }>(
+        `/api/sites/${params.id}/funnel/data?${q}`,
+        session.token,
+      ).catch(() => null),
+    ]);
+    insights = ins;
+    funnelReport = fr?.report?.steps || [];
   } catch (e: any) {
     error = e.message || "Failed to load data";
   }
@@ -121,6 +134,8 @@ export default async function SitePage({
           world={world}
           campaigns={campaigns}
           goals={goals}
+          insights={insights}
+          funnelReport={funnelReport}
           error={error}
         />
       </div>

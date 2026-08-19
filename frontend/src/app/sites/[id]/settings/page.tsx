@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions, apiFetch } from "@/lib/auth";
-import type { Invite, Member, Site, SiteSettings as SiteSettingsT } from "@/lib/types";
+import type { FunnelConfig, Invite, Member, Monitor, Site, SiteSettings as SiteSettingsT } from "@/lib/types";
 import AppShell from "@/components/AppShell";
 import SiteSettings from "@/components/SiteSettings";
 
@@ -19,14 +19,18 @@ export default async function SiteSettingsPage({
   let members: Member[] = [];
   let invites: Invite[] = [];
   let settings: SiteSettingsT | null = null;
+  let funnels: FunnelConfig[] = [];
+  let monitors: Monitor[] = [];
   let error = "";
 
   try {
-    [site, members, invites, settings] = await Promise.all([
+    [site, members, invites, settings, funnels, monitors] = await Promise.all([
       apiFetch<Site>(`/api/sites/${params.id}`, session.token),
       apiFetch<Member[]>(`/api/sites/${params.id}/members`, session.token).catch(() => []),
       apiFetch<Invite[]>(`/api/sites/${params.id}/invites`, session.token).catch(() => []),
       apiFetch<SiteSettingsT>(`/api/sites/${params.id}/settings`, session.token).catch(() => null),
+      apiFetch<FunnelConfig[]>(`/api/sites/${params.id}/funnels`, session.token).catch(() => []),
+      apiFetch<Monitor[]>(`/api/sites/${params.id}/monitors`, session.token).catch(() => []),
     ]);
   } catch (e: any) {
     error = e.message || "Site not found";
@@ -46,6 +50,8 @@ export default async function SiteSettingsPage({
           initialMembers={members}
           initialInvites={invites}
           initialSettings={settings}
+          initialFunnels={funnels}
+          initialMonitors={monitors}
         />
       </div>
     </AppShell>

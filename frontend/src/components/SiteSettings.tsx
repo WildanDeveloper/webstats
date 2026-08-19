@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/auth";
-import type { Invite, Member, Site, SiteSettings as SiteSettingsT, SslResult } from "@/lib/types";
+import type { FunnelConfig, Invite, Member, Monitor, MonitorCheck, Site, SiteSettings as SiteSettingsT, SslResult } from "@/lib/types";
 import {
   IconArrowLeft,
   IconCheck,
@@ -14,6 +14,9 @@ import {
   IconTrash,
   IconPlus,
   IconShield,
+  IconGlobe,
+  IconPulse,
+  IconRefresh,
 } from "@/components/icons";
 
 const trackerUrl =
@@ -39,6 +42,8 @@ export default function SiteSettings({
   initialMembers = [],
   initialInvites = [],
   initialSettings = null,
+  initialFunnels = [],
+  initialMonitors = [],
 }: {
   site: Site | null;
   token: string;
@@ -46,6 +51,8 @@ export default function SiteSettings({
   initialMembers?: Member[];
   initialInvites?: Invite[];
   initialSettings?: SiteSettingsT | null;
+  initialFunnels?: FunnelConfig[];
+  initialMonitors?: Monitor[];
 }) {
   const [name, setName] = useState(site?.name || "");
   const [domain, setDomain] = useState(site?.domain || "");
@@ -65,6 +72,26 @@ export default function SiteSettings({
   const [invRole, setInvRole] = useState("viewer");
   const [teamMsg, setTeamMsg] = useState("");
   const [newInvite, setNewInvite] = useState("");
+
+  const [funnels, setFunnels] = useState<FunnelConfig[]>(initialFunnels);
+  const [funnelInput, setFunnelInput] = useState(
+    initialFunnels.map((f) => f.label).join(", "),
+  );
+  const [funnelMsg, setFunnelMsg] = useState("");
+  const [savingFunnel, setSavingFunnel] = useState(false);
+
+  const [monitors, setMonitors] = useState<Monitor[]>(initialMonitors);
+  const [monUrl, setMonUrl] = useState("");
+  const [monInterval, setMonInterval] = useState(60);
+  const [monMsg, setMonMsg] = useState("");
+  const [checks, setChecks] = useState<Record<string, MonitorCheck[]>>({});
+
+  const [publicEnabled, setPublicEnabled] = useState(
+    initialSettings?.public_enabled ?? false,
+  );
+  const [publicToken, setPublicToken] = useState(initialSettings?.public_token || "");
+  const [publicMsg, setPublicMsg] = useState("");
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   const [settings, setSettings] = useState<SiteSettingsT | null>(initialSettings);
   const [settingsMsg, setSettingsMsg] = useState("");
@@ -162,6 +189,130 @@ export default function SiteSettings({
       setMembers((prev) => prev.filter((m) => m.user_id !== userId));
     } catch (err: any) {
       setTeamMsg(err.message);
+    }
+  }
+
+  async function saveFunnel(e: React.FormEvent) {
+    e.preventDefault();
+    if (!site) return;
+    setSavingFunnel(true);
+    setFunnelMsg("");
+    const paths = funnelInput.split(",").map((x) => x.trim()).filter(Boolean);
+    if (paths.length < 2) {
+      setFunnelMsg("Enter at least 2 steps separated by commas");
+      setSavingFunnel(false);
+      return;
+    }
+    try {
+      await apiFetch(`/api/sites/${site.id}/funnels`, token, {
+        method: "PUT",
+        body: JSON.stringify({ paths }),
+      });
+      setFunnelMsg("Funnel updated");
+      const res = await apiFetch<FunnelConfig[]>(`/api/sites/${site.id}/funnels`, token);
+      setFunnels(res);
+    } catch (err: any) {
+      setFunnelMsg(err.message);
+    }
+    setSavingFunnel(false);
+  }
+
+  async function addMonitor(e: React.FormEvent) {
+    e.preventDefault();
+    if (!site) return;
+    setMonMsg("");
+    try {
+      await apiFetch(`/api/sites/${site.id}/monitors`, token, {
+        method: "POST",
+        body: JSON.stringify({ url: monUrl, interval_seconds: monInterval }),
+      });
+      setMonUrl("");
+      const res = await apiFetch<Monitor[]>(`/api/sites/${site.id}/monitors`, token);
+      setMonitors(res);
+    } catch (err: any) {
+      setMonMsg(err.message);
+    }
+  }
+
+  async function toggleMonitor(m: Monitor) {
+    if (!site) return;
+    setMonMsg("");
+    try {
+      await apiFetch(`/api/sites/${site.id}/monitors/${m.id}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: !m.enabled }),
+      });
+      setMonitors((prev) => prev.map((x) => (x.id === m.id ? { ...x, enabled: !m.enabled } : x)));
+    } catch (err: any) {
+      setMonMsg(err.message);
+    }
+  }
+
+  async function deleteMonitor(m: Monitor) {
+    if (!site) return;
+    if (!confirm("Delete this monitor?")) return;
+    setMonMsg("");
+    try {
+      await apiFetch(`/api/sites/${site.id}/monitors/${m.id}`, token, { method: "DELETE" });
+      setMonitors((prev) => prev.filter((x) => x.id !== m.id));
+    } catch (err: any) {
+      setMonMsg(err.message);
+    }
+  }
+
+  async function loadChecks(m: Monitor) {
+    if (!site) return;
+    if (checks[m.id]) {
+      const next = { ...checks };
+      delete next[m.id];
+      setChecks(next);
+      return;
+    }
+    try {
+      const res = await apiFetch<MonitorCheck[]>(
+        `/api/sites/${site.id}/monitors/${m.id}/checks?limit=12`,
+        token,
+      );
+      setChecks((prev) => ({ ...prev, [m.id]: res }));
+    } catch {
+      setChecks((prev) => ({ ...prev, [m.id]: [] }));
+    }
+  }
+
+  async function savePublic(enabled: boolean) {
+    if (!site) return;
+    setPublicMsg("");
+    try {
+      let tok = publicToken;
+      if (enabled && !tok) {
+        tok = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      }
+      const res = await apiFetch<SiteSettingsT>(`/api/sites/${site.id}/settings`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ public_enabled: enabled, public_token: tok || undefined }),
+      });
+      setPublicEnabled(res.public_enabled);
+      setPublicToken(res.public_token || "");
+      setSettings(res);
+      setPublicMsg(res.public_enabled ? "Public dashboard enabled" : "Public dashboard disabled");
+    } catch (err: any) {
+      setPublicMsg(err.message);
+    }
+  }
+
+  async function regenPublic() {
+    if (!site) return;
+    setPublicMsg("");
+    try {
+      const tok = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      const res = await apiFetch<SiteSettingsT>(`/api/sites/${site.id}/settings`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ public_token: tok }),
+      });
+      setPublicToken(res.public_token || "");
+      setPublicMsg("New public link generated");
+    } catch (err: any) {
+      setPublicMsg(err.message);
     }
   }
 
@@ -536,6 +687,199 @@ export default function SiteSettings({
             {savingSettings ? "Saving..." : "Save privacy settings"}
           </button>
         </form>
+      </section>
+
+      <section className="rounded-xl border border-edge bg-card p-6">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <IconGlobe className="h-4 w-4 text-indigo-500" />
+          Public dashboard
+        </h2>
+        <p className="mt-0.5 text-xs text-faint">
+          Share a read-only version of this site's stats without login.
+        </p>
+
+        <label className="mt-4 flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={publicEnabled}
+            onChange={(e) => savePublic(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-indigo-600"
+          />
+          <span>
+            <span className="block text-sm text-ink">Enable public dashboard</span>
+            <span className="block text-xs text-faint">
+              Anyone with the link can view traffic, pages, sources, funnels and uptime.
+            </span>
+          </span>
+        </label>
+
+        {publicEnabled && publicToken && (
+          <div className="mt-3 rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3">
+            <p className="text-xs font-medium text-indigo-400">Public link:</p>
+            <div className="mt-1.5 flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-xs text-soft">
+                {`${origin}/public/${publicToken}`}
+              </code>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(`${origin}/public/${publicToken}`);
+                  setPublicMsg("Link copied");
+                }}
+                className="rounded-md border border-edge px-2 py-1 text-xs text-soft transition-colors hover:bg-raised"
+              >
+                Copy
+              </button>
+              <button
+                onClick={regenPublic}
+                className="rounded-md border border-edge px-2 py-1 text-xs text-soft transition-colors hover:bg-raised"
+                title="Generate a new link"
+              >
+                <IconRefresh className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+        {publicMsg && <p className="mt-3 text-sm text-emerald-500">{publicMsg}</p>}
+      </section>
+
+      <section className="rounded-xl border border-edge bg-card p-6">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <IconPulse className="h-4 w-4 text-indigo-500" />
+          Funnel
+        </h2>
+        <p className="mt-0.5 text-xs text-faint">
+          Define the page steps of your conversion funnel. Shown on the stats page and public dashboard.
+        </p>
+        <form onSubmit={saveFunnel} className="mt-4 space-y-3">
+          <input
+            value={funnelInput}
+            onChange={(e) => setFunnelInput(e.target.value)}
+            placeholder="Steps, e.g. /, /pricing, /signup"
+            className="w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink placeholder-faint outline-none focus:border-indigo-500"
+          />
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={savingFunnel}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {savingFunnel ? "Saving..." : "Save funnel"}
+            </button>
+            {funnels.length > 0 && (
+              <span className="text-xs text-faint">
+                {funnels.length} steps saved
+              </span>
+            )}
+          </div>
+        </form>
+        {funnelMsg && (
+          <p className={`mt-2 text-sm ${funnelMsg === "Funnel updated" ? "text-emerald-500" : "text-red-400"}`}>
+            {funnelMsg}
+          </p>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-edge bg-card p-6">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <IconShield className="h-4 w-4 text-indigo-500" />
+          Uptime monitors
+        </h2>
+        <p className="mt-0.5 text-xs text-faint">
+          Check your site's availability periodically. Results are public via the status page.
+        </p>
+        <form onSubmit={addMonitor} className="mt-4 flex flex-wrap items-center gap-2">
+          <input
+            value={monUrl}
+            onChange={(e) => setMonUrl(e.target.value)}
+            placeholder="https://example.com"
+            required
+            className="min-w-56 flex-1 rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink placeholder-faint outline-none focus:border-indigo-500"
+          />
+          <select
+            value={monInterval}
+            onChange={(e) => setMonInterval(parseInt(e.target.value, 10))}
+            className="rounded-lg border border-edge bg-bg px-2 py-2 text-sm text-ink outline-none focus:border-indigo-500"
+          >
+            <option value={60}>Every 1 min</option>
+            <option value={300}>Every 5 min</option>
+            <option value={900}>Every 15 min</option>
+          </select>
+          <button
+            type="submit"
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+          >
+            <IconPlus className="h-4 w-4" /> Add
+          </button>
+        </form>
+        {monMsg && <p className="mt-3 text-sm text-red-400">{monMsg}</p>}
+
+        <div className="mt-4 space-y-2">
+          {monitors.length === 0 && <p className="text-xs text-faint">No monitors yet.</p>}
+          {monitors.map((m) => (
+            <div key={m.id} className="rounded-lg border border-edge/60 px-3 py-2.5">
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-ink">{m.url}</p>
+                  <p className="text-xs text-faint">
+                    {m.last_ok === null || m.last_ok === undefined
+                      ? "waiting for first check"
+                      : m.last_ok
+                        ? `up · ${m.uptime_pct.toFixed(2)}% uptime`
+                        : `down (HTTP ${m.last_status || "error"}) · ${m.uptime_pct.toFixed(2)}% uptime`}
+                  </p>
+                </div>
+                <span
+                  className={`flex h-2.5 w-2.5 rounded-full ${
+                    m.last_ok === null || m.last_ok === undefined
+                      ? "bg-soft/40"
+                      : m.last_ok
+                        ? "bg-emerald-500"
+                        : "bg-red-500"
+                  }`}
+                />
+                <button
+                  onClick={() => toggleMonitor(m)}
+                  className={`rounded-md px-2 py-1 text-xs transition-colors ${
+                    m.enabled
+                      ? "bg-raised text-soft hover:text-ink"
+                      : "bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                  }`}
+                >
+                  {m.enabled ? "Pause" : "Resume"}
+                </button>
+                <button
+                  onClick={() => loadChecks(m)}
+                  className="rounded-md border border-edge px-2 py-1 text-xs text-soft transition-colors hover:bg-raised"
+                >
+                  {checks[m.id] ? "Hide" : "Checks"}
+                </button>
+                <button
+                  onClick={() => deleteMonitor(m)}
+                  className="rounded-lg p-2 text-faint transition-colors hover:bg-raised hover:text-red-500"
+                  title="Delete monitor"
+                >
+                  <IconTrash className="h-4 w-4" />
+                </button>
+              </div>
+              {checks[m.id] && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {checks[m.id].length === 0 && <span className="text-xs text-faint">No checks yet.</span>}
+                  {[...checks[m.id]].reverse().map((c, i) => (
+                    <span
+                      key={i}
+                      className={`rounded-md px-2 py-0.5 text-[11px] ${
+                        c.ok ? "bg-emerald-500/10 text-emerald-500" : "bg-red-500/10 text-red-500"
+                      }`}
+                      title={`${c.checked_at} · ${c.latency_ms}ms`}
+                    >
+                      {c.ok ? `${c.status_code} · ${c.latency_ms}ms` : "down"}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   );

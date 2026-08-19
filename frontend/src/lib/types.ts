@@ -70,6 +70,61 @@ export type SiteSettings = {
   site_id: string;
   ip_hashing: boolean;
   retention_days: number;
+  public_token: string;
+  public_enabled: boolean;
+};
+
+export type FunnelConfig = {
+  id: string;
+  site_id: string;
+  position: number;
+  label: string;
+};
+
+export type Monitor = {
+  id: string;
+  site_id: string;
+  url: string;
+  interval_seconds: number;
+  expected_status: number;
+  enabled: boolean;
+  last_status: number | null;
+  last_ok: boolean | null;
+  last_check_at: string | null;
+  uptime_pct: number;
+  created_at: string;
+};
+
+export type MonitorCheck = {
+  status_code: number;
+  ok: boolean;
+  latency_ms: number;
+  checked_at: string;
+};
+
+export type ApiKey = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+export type InsightHighlight = {
+  kind: string;
+  title: string;
+  text: string;
+  delta_pct: number;
+};
+
+export type Insights = {
+  summary: string;
+  highlights: InsightHighlight[];
+};
+
+export type PublicStatus = {
+  site: { name: string; domain: string; color: string };
+  monitors: Monitor[];
 };
 
 export type Member = {

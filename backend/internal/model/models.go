@@ -82,6 +82,8 @@ type SiteSettings struct {
 	SiteID        string `json:"site_id"`
 	IPHashing     bool   `json:"ip_hashing"`
 	RetentionDays int    `json:"retention_days"`
+	PublicToken   string `json:"public_token"`
+	PublicEnabled bool   `json:"public_enabled"`
 }
 
 type Member struct {
@@ -118,4 +120,64 @@ type Check struct {
 	Status    string    `json:"status"`
 	LatencyMs int64     `json:"latency_ms"`
 	CheckedAt time.Time `json:"checked_at"`
+}
+
+type FunnelStep struct {
+	ID       string `json:"id"`
+	SiteID   string `json:"site_id"`
+	Position int    `json:"position"`
+	Label    string `json:"label"`
+}
+
+type Funnel struct {
+	ID     string       `json:"id"`
+	SiteID string       `json:"site_id"`
+	Steps  []FunnelStep `json:"steps"`
+}
+
+type Monitor struct {
+	ID              string     `json:"id"`
+	SiteID          string     `json:"site_id"`
+	URL             string     `json:"url"`
+	IntervalSeconds int        `json:"interval_seconds"`
+	ExpectedStatus  int        `json:"expected_status"`
+	Enabled         bool       `json:"enabled"`
+	LastStatus      *int       `json:"last_status"`
+	LastOK          *bool      `json:"last_ok"`
+	LastCheckAt     *time.Time `json:"last_check_at"`
+	UptimePct       float64    `json:"uptime_pct"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+type MonitorCheck struct {
+	StatusCode int       `json:"status_code"`
+	OK         bool      `json:"ok"`
+	LatencyMs  int       `json:"latency_ms"`
+	CheckedAt  time.Time `json:"checked_at"`
+}
+
+type ApiKey struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Prefix     string    `json:"prefix"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastUsedAt time.Time `json:"last_used_at"`
+}
+
+type InsightHighlight struct {
+	Kind     string  `json:"kind"`
+	Title    string  `json:"title"`
+	Text     string  `json:"text"`
+	DeltaPct float64 `json:"delta_pct"`
+}
+
+type Insights struct {
+	Summary    string             `json:"summary"`
+	Highlights []InsightHighlight `json:"highlights"`
+}
+
+type PublicSiteInfo struct {
+	Name   string `json:"name"`
+	Domain string `json:"domain"`
+	Color  string `json:"color"`
 }

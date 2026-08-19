@@ -31,6 +31,15 @@ export function IconChart({ className }: IconProps) {
   );
 }
 
+export function IconSparkles({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
+      <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z" />
+    </svg>
+  );
+}
+
 export function IconGrid({ className }: IconProps) {
   return (
     <svg {...base} className={className}>
@@ -38,6 +47,14 @@ export function IconGrid({ className }: IconProps) {
       <rect x="14" y="3" width="7" height="7" rx="1.5" />
       <rect x="3" y="14" width="7" height="7" rx="1.5" />
       <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  );
+}
+
+export function IconRefresh({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
     </svg>
   );
 }
@@ -201,6 +218,15 @@ export function IconMail({ className }: IconProps) {
     <svg {...base} className={className}>
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path d="M3 7l9 6 9-6" />
+    </svg>
+  );
+}
+
+export function IconKey({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <circle cx="7.5" cy="15.5" r="4.5" />
+      <path d="M10.7 12.3L21 2m-4 4l3 3m-6-2l3 3" />
     </svg>
   );
 }
