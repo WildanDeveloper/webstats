@@ -19,8 +19,9 @@ import {
   IconRefresh,
 } from "@/components/icons";
 
-const trackerUrl =
-  process.env.NEXT_PUBLIC_TRACKER_URL || "http://localhost:8085";
+const trackerUrl = () =>
+  process.env.NEXT_PUBLIC_TRACKER_URL ||
+  (typeof window !== "undefined" ? window.location.origin : "");
 
 const PALETTE = [
   "#ef4444",
@@ -142,7 +143,7 @@ export default function SiteSettings({
     setChecking(false);
   }
 
-  const installCode = `<script async src="${trackerUrl}/track.js" data-site="${site.site_key}"></script>`;
+  const installCode = `<script async src="${trackerUrl()}/track.js" data-site="${site.site_key}"></script>`;
 
   async function sendInvite(e: React.FormEvent) {
     e.preventDefault();
