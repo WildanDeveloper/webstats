@@ -556,3 +556,13 @@ func logsHandler(db *pgxpool.Pool) fiber.Handler {
 		return c.JSON(out)
 	}
 }
+
+func clearLogsHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		_, err := db.Exec(c.Context(), `DELETE FROM notif_logs WHERE user_id = $1`, auth.UserID(c))
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	}
+}

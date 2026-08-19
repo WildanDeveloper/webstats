@@ -124,6 +124,7 @@ func main() {
 	notif.Delete("/rules/:id", deleteRuleHandler(pool))
 	notif.Post("/rules/:id/test", testRuleHandler(pool))
 	notif.Get("/logs", logsHandler(pool))
+	notif.Delete("/logs", clearLogsHandler(pool))
 	notif.Get("/reports", listReportsHandler(pool))
 	notif.Post("/reports", createReportHandler(pool))
 	notif.Patch("/reports/:id", updateReportHandler(pool))

@@ -114,6 +114,19 @@ export default function NotificationsView({
   const [rpHour, setRpHour] = useState("8");
   const [showAddReport, setShowAddReport] = useState(false);
 
+  async function clearLogs() {
+    setError("");
+    setBusy(true);
+    try {
+      await apiFetch("/api/notifications/logs", token, { method: "DELETE" });
+      setLogs([]);
+    } catch (e: any) {
+      setError(e.message || "Failed to clear logs");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function addProvider(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -673,7 +686,19 @@ async function refreshLogs() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-base font-semibold text-ink">Delivery log</h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-ink">Delivery log</h2>
+          {logs.length > 0 && (
+            <button
+              onClick={clearLogs}
+              disabled={busy}
+              className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-faint transition-colors hover:border-red-500/40 hover:text-red-500 disabled:opacity-50"
+            >
+              <IconTrash className="h-3.5 w-3.5" />
+              Clear logs
+            </button>
+          )}
+        </div>
         <div className="overflow-x-auto rounded-xl border border-edge">
           <table className="w-full text-left text-sm">
             <thead>
