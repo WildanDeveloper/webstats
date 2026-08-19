@@ -252,13 +252,13 @@ func getSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var s model.SiteSettings
 		err := db.QueryRow(c.Context(), `
-			SELECT ss.site_id, ss.ip_hashing, ss.retention_days,
+			SELECT s.id, COALESCE(ss.ip_hashing, true), COALESCE(ss.retention_days, 0),
 			       COALESCE(s.public_token, ''), COALESCE(s.public_enabled, false)
-			FROM site_settings ss
-			JOIN sites s ON s.id = ss.site_id
-			WHERE ss.site_id = $1 AND (
-				$2::uuid IN (SELECT user_id FROM sites WHERE id = ss.site_id)
-				OR $2::uuid IN (SELECT user_id FROM site_members WHERE site_id = ss.site_id)
+			FROM sites s
+			LEFT JOIN site_settings ss ON ss.site_id = s.id
+			WHERE s.id = $1 AND (
+				$2::uuid IN (SELECT user_id FROM sites WHERE id = s.id)
+				OR $2::uuid IN (SELECT user_id FROM site_members WHERE site_id = s.id)
 			)`, c.Params("id"), auth.UserID(c)).
 			Scan(&s.SiteID, &s.IPHashing, &s.RetentionDays, &s.PublicToken, &s.PublicEnabled)
 		if err != nil {
