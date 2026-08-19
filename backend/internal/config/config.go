@@ -28,7 +28,7 @@ func getenv(key, def string) string {
 
 func Load() *Config {
 	return &Config{
-		Port:         getenv("PORT", "8080"),
+		Port:         getenv("PORT", "8086"),
 		Bind:         os.Getenv("BIND"),
 		DBURL:        getenv("DATABASE_URL", "postgres://webstats:webstats@localhost:5432/webstats"),
 		JWTSecret:    getenv("JWT_SECRET", "webstats-dev-secret-change-me"),
