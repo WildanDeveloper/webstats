@@ -2,7 +2,9 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8086";
+  process.env.API_SERVER_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:8086";
 
 export const authOptions: NextAuthOptions = {
   providers: [
