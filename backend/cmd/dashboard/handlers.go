@@ -175,6 +175,9 @@ func listSitesHandler(db *pgxpool.Pool) fiber.Handler {
 			}
 			sites = append(sites, s)
 		}
+		if sites == nil {
+			sites = []model.Site{}
+		}
 		return c.JSON(sites)
 	}
 }

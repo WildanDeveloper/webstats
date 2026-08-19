@@ -73,6 +73,9 @@ func listProvidersHandler(db *pgxpool.Pool) fiber.Handler {
 			p.Config = maskConfig(p.Kind, p.Config)
 			out = append(out, p)
 		}
+		if out == nil {
+			out = []provider{}
+		}
 		return c.JSON(out)
 	}
 }
@@ -269,6 +272,9 @@ func listRulesHandler(db *pgxpool.Pool) fiber.Handler {
 				return errJSON(c, 500, "scan failed")
 			}
 			out = append(out, r)
+		}
+		if out == nil {
+			out = []rule{}
 		}
 		return c.JSON(out)
 	}
@@ -543,6 +549,9 @@ func logsHandler(db *pgxpool.Pool) fiber.Handler {
 				return errJSON(c, 500, "scan failed")
 			}
 			out = append(out, e)
+		}
+		if out == nil {
+			out = []entry{}
 		}
 		return c.JSON(out)
 	}

@@ -65,6 +65,9 @@ func listFunnelsHandler(db *pgxpool.Pool) fiber.Handler {
 		if out == nil {
 			out = []model.FunnelStep{}
 		}
+		if out == nil {
+			out = []model.FunnelStep{}
+		}
 		return c.JSON(out)
 	}
 }

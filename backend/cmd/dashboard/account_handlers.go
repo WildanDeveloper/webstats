@@ -78,6 +78,9 @@ func listApiKeysHandler(db *pgxpool.Pool) fiber.Handler {
 		if out == nil {
 			out = []model.ApiKey{}
 		}
+		if out == nil {
+			out = []model.ApiKey{}
+		}
 		return c.JSON(out)
 	}
 }

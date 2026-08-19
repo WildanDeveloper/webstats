@@ -17,8 +17,9 @@ import {
   IconShieldX,
 } from "@/components/icons";
 
-const trackerUrl =
-  process.env.NEXT_PUBLIC_TRACKER_URL || "http://localhost:8085";
+const trackerUrl = () =>
+  process.env.NEXT_PUBLIC_TRACKER_URL ||
+  (typeof window !== "undefined" ? window.location.origin : "");
 
 export default function SiteList({
   initial,
@@ -35,7 +36,7 @@ export default function SiteList({
   const [copied, setCopied] = useState<string | null>(null);
 
   const installCode = (site: Site) =>
-    `<script async src="${trackerUrl}/track.js" data-site="${site.site_key}"></script>`;
+    `<script async src="${trackerUrl()}/track.js" data-site="${site.site_key}"></script>`;
 
   async function create(e: React.FormEvent) {
     e.preventDefault();

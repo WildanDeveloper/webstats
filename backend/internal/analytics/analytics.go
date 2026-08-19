@@ -581,12 +581,12 @@ func (q *Queries) RootOverview(ctx context.Context, db *pgxpool.Pool, userID, pe
 	dateExpr := "to_char(date_trunc('" + trunc + "', p.visited_at), '" + sqlLayout + "')"
 
 	var out RootOverview
-	member := `OR s.id IN (SELECT site_id FROM site_members WHERE user_id = $1)`
+	member := ` OR s.id IN (SELECT site_id FROM site_members WHERE user_id = $1)`
 	err := db.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM pageviews p JOIN sites s ON s.id = p.site_id WHERE (s.user_id = $1`+member+`) AND p.visited_at >= $2 AND p.visited_at < $3),
 			(SELECT count(DISTINCT p.session_id) FROM pageviews p JOIN sites s ON s.id = p.site_id WHERE (s.user_id = $1`+member+`) AND p.visited_at >= $2 AND p.visited_at < $3),
-			(SELECT count(*) FROM sites WHERE user_id = $1`+member+`),
+			(SELECT count(*) FROM sites s WHERE user_id = $1`+member+`),
 			(SELECT count(*) FROM events e JOIN sites s ON s.id = e.site_id WHERE (s.user_id = $1`+member+`) AND e.created_at >= $2 AND e.created_at < $3)`,
 		userID, from, to).Scan(&out.Pageviews, &out.Visitors, &out.Sites, &out.Events)
 	if err != nil {
@@ -643,11 +643,14 @@ func (q *Queries) RootOverview(ctx context.Context, db *pgxpool.Pool, userID, pe
 			SiteID: a.siteID, Name: a.name, Color: a.color, Points: points,
 		})
 	}
+	if out.Series == nil {
+		out.Series = []SiteSeries{}
+	}
 	return out, nil
 }
 
 func fillSeries(from, to time.Time, hourly bool, layout string, counts, visitors map[string]int64) []model.TimePoint {
-	var pts []model.TimePoint
+	pts := []model.TimePoint{}
 	step := 24 * time.Hour
 	if hourly {
 		step = time.Hour
