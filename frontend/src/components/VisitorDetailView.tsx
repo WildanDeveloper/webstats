@@ -106,6 +106,40 @@ export default function VisitorDetailView({
             </div>
           </div>
 
+          <section className="overflow-hidden rounded-xl border border-edge bg-card">
+            <div className="flex items-center justify-between px-5 pt-5">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <IconShieldCheck className="h-4 w-4 text-indigo-500" /> Location
+              </h2>
+              <p className="text-xs text-faint">
+                {flagEmoji(cc)} {[d.city, d.region, COUNTRY_NAMES[cc] || d.country].filter(Boolean).join(", ") || "Unknown"}
+              </p>
+            </div>
+            {d.lat !== 0 && d.lon !== 0 ? (
+              <svg viewBox={`0 0 ${W} ${H}`} className="mt-3 w-full" preserveAspectRatio="xMidYMid meet">
+                <rect x="0" y="0" width={W} height={H} fill="var(--raised)" />
+                <path
+                  d={COUNTRY_PATHS[cc] || ""}
+                  fill="currentColor"
+                  className="text-edge opacity-60"
+                />
+                <circle cx={px(d.lon)} cy={py(d.lat)} r={9} fill="#6366f1" opacity={0.95} />
+                <circle cx={px(d.lon)} cy={py(d.lat)} r={22} fill="#6366f1" opacity={0.2} />
+                <text
+                  x={Math.min(Math.max(px(d.lon) + 14, 6), W - 70)}
+                  y={Math.max(py(d.lat) - 10, 14)}
+                  className="fill-ink"
+                  fontSize="13"
+                  fontWeight="700"
+                >
+                  {d.city || d.region || d.country}
+                </text>
+              </svg>
+            ) : (
+              <p className="px-5 pb-5 pt-2 text-sm text-faint">Location unknown.</p>
+            )}
+          </section>
+
           <div className="grid gap-5 md:grid-cols-2">
             <section className="rounded-xl border border-edge bg-card p-5">
               <h2 className="mb-3 text-sm font-semibold text-ink">Details</h2>
@@ -124,55 +158,24 @@ export default function VisitorDetailView({
             </section>
 
             <section className="rounded-xl border border-edge bg-card p-5">
-              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
-                <IconShieldCheck className="h-4 w-4 text-indigo-500" /> Location
-              </h2>
-              {d.lat !== 0 && d.lon !== 0 ? (
-                <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
-                  <path
-                    d={COUNTRY_PATHS[cc] || ""}
-                    fill="currentColor"
-                    className="text-edge opacity-60"
-                  />
-                  <circle cx={px(d.lon)} cy={py(d.lat)} r={7} fill="#6366f1" opacity={0.9} />
-                  <circle cx={px(d.lon)} cy={py(d.lat)} r={16} fill="#6366f1" opacity={0.25} />
-                  <text
-                    x={Math.min(Math.max(px(d.lon) + 12, 4), W - 60)}
-                    y={Math.max(py(d.lat) - 8, 12)}
-                    className="fill-ink"
-                    fontSize="11"
-                    fontWeight="600"
-                  >
-                    {d.city || d.region || d.country}
-                  </text>
-                </svg>
-              ) : (
-                <p className="text-sm text-faint">Location unknown.</p>
-              )}
-              <p className="mt-3 text-xs text-faint">
-                {flagEmoji(cc)} {[d.city, d.region, COUNTRY_NAMES[cc] || d.country].filter(Boolean).join(", ")}
-              </p>
+              <h2 className="mb-3 text-sm font-semibold text-ink">Pages visited</h2>
+              {d.paths.length === 0 && <p className="text-sm text-faint">No pages recorded.</p>}
+              <ul className="space-y-2">
+                {d.paths.map((p) => (
+                  <li key={p.key} className="flex items-center gap-3 text-sm">
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-soft">{p.key}</span>
+                    <span className="h-1 w-28 overflow-hidden rounded-full bg-raised">
+                      <span
+                        className="block h-full rounded-full bg-indigo-500/80"
+                        style={{ width: `${(p.value / (d.paths[0]?.value || 1)) * 100}%` }}
+                      />
+                    </span>
+                    <span className="w-8 text-right tabular-nums text-faint">{p.value}</span>
+                  </li>
+                ))}
+              </ul>
             </section>
           </div>
-
-          <section className="rounded-xl border border-edge bg-card p-5">
-            <h2 className="mb-3 text-sm font-semibold text-ink">Pages visited</h2>
-            {d.paths.length === 0 && <p className="text-sm text-faint">No pages recorded.</p>}
-            <ul className="space-y-2">
-              {d.paths.map((p) => (
-                <li key={p.key} className="flex items-center gap-3 text-sm">
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-soft">{p.key}</span>
-                  <span className="h-1 w-28 overflow-hidden rounded-full bg-raised">
-                    <span
-                      className="block h-full rounded-full bg-indigo-500/80"
-                      style={{ width: `${(p.value / (d.paths[0]?.value || 1)) * 100}%` }}
-                    />
-                  </span>
-                  <span className="w-8 text-right tabular-nums text-faint">{p.value}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
 
           {d.history.length > 0 && (
             <section className="rounded-xl border border-edge bg-card p-5">
