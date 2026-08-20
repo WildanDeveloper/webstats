@@ -23,6 +23,7 @@ import VisitorsChart from "@/components/charts/VisitorsChart";
 import TopList from "@/components/charts/TopList";
 import DonutChart from "@/components/charts/DonutChart";
 import RealtimePanel from "@/components/RealtimePanel";
+import RecentVisitors from "@/components/RecentVisitors";
 import WorldMap from "@/components/WorldMap";
 import {
   IconArrowLeft,
@@ -398,6 +399,8 @@ export default function StatsView(props: {
           )}
 
           {!isPublic && <RealtimePanel token={token} siteId={siteId} />}
+
+          {!isPublic && <RecentVisitors token={token} siteId={siteId} />}
 
           {props.insights && (
             <section className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-5">

@@ -180,6 +180,17 @@ export type AdminStats = {
   events: number;
 };
 
+export type Visitor = {
+  ip: string;
+  session_id: string;
+  country: string;
+  browser: string;
+  os: string;
+  device: string;
+  path: string;
+  visited_at: string;
+};
+
 export type Realtime = {
   visitors: number;
   pageviews: number;

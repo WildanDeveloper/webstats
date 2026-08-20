@@ -31,6 +31,7 @@ type Record struct {
 	Lang      string            `json:"lang"`
 	Country   string            `json:"country"`
 	IPHash    string            `json:"ip_hash"`
+	IP        string            `json:"ip"`
 	Ts        time.Time         `json:"ts"`
 	EventName string            `json:"event_name"`
 	URL       string            `json:"url"`
@@ -178,7 +179,7 @@ func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 				Title: r.Title, Referrer: r.Referrer, ReferrerHost: hostOf(r.Referrer),
 				UA: r.UA, Browser: info.Browser, OS: info.OS, Device: info.Device,
 				Country: r.Country, Screen: r.Screen, Lang: r.Lang,
-				IPHash: r.IPHash, VisitedAt: r.Ts, UTM: r.UTM,
+				IPHash: r.IPHash, IP: r.IP, VisitedAt: r.Ts, UTM: r.UTM,
 			})
 			sites[r.SiteID] = true
 			d := r.Ts.UTC().Truncate(24 * time.Hour)
@@ -232,6 +233,7 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 		Lang:      str(raw["lang"]),
 		Country:   cc,
 		IPHash:    ipHash,
+		IP:        ip,
 		Ts:        ts,
 		EventName: str(raw["event_name"]),
 		URL:       str(raw["url"]),

@@ -78,6 +78,7 @@ func main() {
 	stats.Get("/countries", topHandler(pool, "country"))
 	stats.Get("/events", eventsHandler(pool))
 	stats.Get("/realtime", realtimeHandler(pool))
+	stats.Get("/visitors", visitorsHandler(pool))
 	stats.Get("/checks", checksHandler(pool))
 	stats.Get("/world", worldHandler(pool))
 	stats.Get("/export", exportHandler(pool))

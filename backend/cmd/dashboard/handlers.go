@@ -626,6 +626,19 @@ func checksHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func visitorsHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		out, err := analytics.Q.RecentVisitors(c.Context(), db, auth.UserID(c), c.Params("id"), 50)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errJSON(c, 404, "site not found")
+		}
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
 func worldHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		out, err := analytics.Q.World(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
