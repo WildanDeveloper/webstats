@@ -341,7 +341,10 @@ func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, per
 		column = "referrer_host"
 		order = "count(*) DESC NULLS LAST"
 	}
-	fill := "'(direct)'"
+	fill := "'unknown'"
+	if column == "referrer" {
+		fill = "'(direct)'"
+	}
 	if column == "country" {
 		fill = "'unknown'"
 	}
