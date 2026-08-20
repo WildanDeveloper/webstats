@@ -2,7 +2,7 @@
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import type { Row } from "@/lib/types";
-import { COUNTRY_NAMES } from "./countryPaths";
+import { COUNTRY_NAMES } from "../countryPaths";
 
 const nf = new Intl.NumberFormat("en-US");
 
