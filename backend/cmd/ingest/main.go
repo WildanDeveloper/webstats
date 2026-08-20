@@ -33,7 +33,7 @@ func main() {
 	defer buf.Stop()
 
 	app := fiber.New(fiber.Config{ProxyHeader: "X-Forwarded-For"})
-	app.Use(cors.New(cors.Config{AllowOrigins: cfg.AllowOrigins, AllowMethods: "GET,POST,OPTIONS", AllowHeaders: "Content-Type"}))
+	app.Use(cors.New(cors.Config{AllowMethods: "GET,POST,OPTIONS", AllowHeaders: "Content-Type", AllowCredentials: true, AllowOriginsFunc: func(origin string) bool { return true }}))
 
 	app.Get("/track.js", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "application/javascript; charset=utf-8")
