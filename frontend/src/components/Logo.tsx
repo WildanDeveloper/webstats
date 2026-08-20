@@ -6,7 +6,7 @@ export default function Logo({ size = 32 }: { size?: number }) {
   return (
     <div className="flex items-center gap-2.5">
       <LogoMark className={`${cls} text-indigo-500`} />
-      <span className="text-lg font-semibold tracking-tight text-zinc-100">
+      <span className="text-lg font-semibold tracking-tight text-ink">
         WebStats
       </span>
     </div>
