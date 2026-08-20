@@ -1,6 +1,7 @@
 "use client";
 
 import type { WorldPoint } from "@/lib/types";
+import { WORLD_PATH } from "./worldPath";
 
 export default function WorldMap({ points }: { points: WorldPoint[] }) {
   if (points.length === 0) return null;
@@ -17,6 +18,11 @@ export default function WorldMap({ points }: { points: WorldPoint[] }) {
         World map
       </h2>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
+        <path
+          d={WORLD_PATH}
+          fill="currentColor"
+          className="text-edge opacity-60"
+        />
         {points.map((p) => {
           const r = 3 + (p.count / max) * 9;
           return (
