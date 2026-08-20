@@ -1,55 +1,38 @@
 "use client";
 
 import type { WorldPoint } from "@/lib/types";
-import { WORLD_PATH } from "./worldPath";
+import { COUNTRY_PATHS } from "./countryPaths";
 
 export default function WorldMap({ points }: { points: WorldPoint[] }) {
   if (points.length === 0) return null;
 
-  const W = 720;
-  const H = 360;
   const max = Math.max(...points.map((p) => p.count));
-  const x = (lng: number) => ((lng + 180) / 360) * W;
-  const y = (lat: number) => ((90 - lat) / 180) * H;
+  const byCode = new Map(points.map((p) => [p.country, p.count]));
 
   return (
     <section className="rounded-xl border border-edge bg-card p-5">
       <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">
         World map
       </h2>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
-        <path
-          d={WORLD_PATH}
-          fill="currentColor"
-          className="text-edge opacity-60"
-        />
-        {points.map((p) => {
-          const r = 3 + (p.count / max) * 9;
+      <svg viewBox="0 0 720 360" className="w-full">
+        {Object.entries(COUNTRY_PATHS).map(([cc, d]) => {
+          const n = byCode.get(cc);
           return (
-            <circle
-              key={p.country}
-              cx={x(p.lng)}
-              cy={y(p.lat)}
-              r={r}
-              fill="#6366f1"
-              opacity={0.75}
-              className="cursor-pointer transition-opacity hover:opacity-100"
+            <path
+              key={cc}
+              d={d}
+              fill={n ? "#6366f1" : "currentColor"}
+              fillOpacity={n ? 0.18 + 0.82 * (n / max) : 0.45}
+              className={n ? undefined : "text-edge"}
+              style={{ transition: "fill-opacity 150ms" }}
             >
-              <title>{`${p.country} — ${p.count} pageview${p.count > 1 ? "s" : ""}`}</title>
-            </circle>
+              <title>
+                {cc}
+                {n ? ` — ${n} pageview${n > 1 ? "s" : ""}` : ""}
+              </title>
+            </path>
           );
         })}
-        {points.slice(0, 8).map((p) => (
-          <text
-            key={"t" + p.country}
-            x={Math.min(Math.max(x(p.lng) + 8, 4), W - 60)}
-            y={Math.max(y(p.lat) - 4, 10)}
-            className="fill-faint"
-            fontSize="9"
-          >
-            {`${p.country} ${p.count}`}
-          </text>
-        ))}
       </svg>
     </section>
   );
