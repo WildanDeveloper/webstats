@@ -64,6 +64,7 @@ type PageviewRow struct {
 	OS           string            `json:"os"`
 	Device       string            `json:"device"`
 	Country      string            `json:"country"`
+	ISP          string            `json:"isp"`
 	Screen       string            `json:"screen"`
 	Lang         string            `json:"lang"`
 	IPHash       string            `json:"ip_hash"`
@@ -92,11 +93,11 @@ func InsertPageviews(ctx context.Context, db *pgxpool.Pool, rows []PageviewRow) 
 	defer tx.Rollback(ctx)
 	for _, r := range rows {
 		if _, err := tx.Exec(ctx, `INSERT INTO pageviews
-				(site_id, session_id, path, title, referrer, referrer_host, ua, browser, os, device, country, screen, lang, ip_hash, ip, visited_at,
+				(site_id, session_id, path, title, referrer, referrer_host, ua, browser, os, device, country, isp, screen, lang, ip_hash, ip, visited_at,
 				 utm_source, utm_medium, utm_campaign, utm_content, utm_term)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
 			r.SiteID, r.SessionID, r.Path, r.Title, r.Referrer, r.ReferrerHost,
-			r.UA, r.Browser, r.OS, r.Device, r.Country, r.Screen, r.Lang, r.IPHash, r.IP, r.VisitedAt,
+			r.UA, r.Browser, r.OS, r.Device, r.Country, r.ISP, r.Screen, r.Lang, r.IPHash, r.IP, r.VisitedAt,
 			utm(r.UTM, "utm_source"), utm(r.UTM, "utm_medium"), utm(r.UTM, "utm_campaign"),
 			utm(r.UTM, "utm_content"), utm(r.UTM, "utm_term")); err != nil {
 			return err
@@ -527,6 +528,93 @@ func (q *Queries) RecentVisitors(ctx context.Context, db *pgxpool.Pool, userID, 
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+type VisitorDetail struct {
+	IP          string    `json:"ip"`
+	ISP         string    `json:"isp"`
+	Country     string    `json:"country"`
+	Browser     string    `json:"browser"`
+	OS          string    `json:"os"`
+	Device      string    `json:"device"`
+	Screen      string    `json:"screen"`
+	Lang        string    `json:"lang"`
+	SessionID   string    `json:"session_id"`
+	FirstSeen   time.Time `json:"first_seen"`
+	LastSeen    time.Time `json:"last_seen"`
+	Pageviews   int64     `json:"pageviews"`
+	Sessions    int64     `json:"sessions"`
+Paths       []model.Row  `json:"paths"`
+	History     []Visitor `json:"history"`
+	CountryCode string    `json:"country_code"`
+}
+
+func (q *Queries) VisitorDetail(ctx context.Context, db *pgxpool.Pool, userID, siteID, ip string) (VisitorDetail, error) {
+	var d VisitorDetail
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
+		return d, err
+	} else if !ok {
+		return d, pgx.ErrNoRows
+	}
+	err := db.QueryRow(ctx, `
+		SELECT ip, COALESCE(NULLIF(MAX(isp), ''), 'unknown'),
+		       COALESCE(NULLIF(MAX(country), ''), 'unknown'),
+		       COALESCE(NULLIF(MAX(browser), ''), 'unknown'),
+		       COALESCE(NULLIF(MAX(os), ''), 'unknown'),
+		       COALESCE(NULLIF(MAX(device), ''), 'unknown'),
+		       COALESCE(MAX(screen), ''), COALESCE(MAX(lang), ''),
+		       MIN(visited_at), MAX(visited_at), count(*), count(DISTINCT session_id)
+		FROM pageviews
+		WHERE site_id = $1 AND ip = $2
+		GROUP BY ip`, siteID, ip).
+		Scan(&d.IP, &d.ISP, &d.Country, &d.Browser, &d.OS, &d.Device, &d.Screen, &d.Lang,
+			&d.FirstSeen, &d.LastSeen, &d.Pageviews, &d.Sessions)
+	if err != nil {
+		return d, err
+	}
+	d.SessionID, _ = func() (string, error) {
+		var s string
+		err := db.QueryRow(ctx, `SELECT session_id FROM pageviews WHERE site_id=$1 AND ip=$2 ORDER BY visited_at DESC LIMIT 1`, siteID, ip).Scan(&s)
+		return s, err
+	}()
+	rows, err := db.Query(ctx, `
+		SELECT COALESCE(path, '/'), count(*) FROM pageviews
+		WHERE site_id = $1 AND ip = $2 GROUP BY 1 ORDER BY 2 DESC LIMIT 20`, siteID, ip)
+	if err != nil {
+		return d, err
+	}
+	defer rows.Close()
+	d.Paths = make([]model.Row, 0)
+	for rows.Next() {
+		var r model.Row
+		if err := rows.Scan(&r.Key, &r.Value); err != nil {
+			return d, err
+		}
+		d.Paths = append(d.Paths, r)
+	}
+	if err := rows.Err(); err != nil {
+		return d, err
+	}
+	rows2, err := db.Query(ctx, `
+		SELECT ip, session_id, COALESCE(NULLIF(country, ''), 'unknown'),
+		       COALESCE(NULLIF(browser, ''), 'unknown'), COALESCE(NULLIF(os, ''), 'unknown'),
+		       COALESCE(NULLIF(device, ''), 'unknown'), COALESCE(path, '/'), visited_at
+		FROM pageviews WHERE site_id = $1 AND ip = $2
+		ORDER BY visited_at DESC LIMIT 50`, siteID, ip)
+	if err != nil {
+		return d, err
+	}
+	defer rows2.Close()
+	d.History = make([]Visitor, 0)
+	for rows2.Next() {
+		var v Visitor
+		if err := rows2.Scan(&v.IP, &v.SessionID, &v.Country, &v.Browser, &v.OS, &v.Device, &v.Path, &v.VisitedAt); err != nil {
+			return d, err
+		}
+		d.History = append(d.History, v)
+	}
+	d.CountryCode = d.Country
+	return d, rows2.Err()
 }
 
 func (q *Queries) World(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) ([]model.WorldPoint, error) {

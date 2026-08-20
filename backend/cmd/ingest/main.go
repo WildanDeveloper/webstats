@@ -27,8 +27,12 @@ func main() {
 	if g.Loaded() {
 		log.Printf("geo database loaded")
 	}
+	asn, _ := geo.LoadASN(cfg.ASNCSV)
+	if asn.Loaded() {
+		log.Printf("asn database loaded")
+	}
 
-	buf := ingest.NewBuffer(cfg, pool, g)
+	buf := ingest.NewBuffer(cfg, pool, g, asn)
 	buf.Run(ctx)
 	defer buf.Stop()
 

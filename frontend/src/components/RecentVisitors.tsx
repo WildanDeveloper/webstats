@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/auth";
 import type { Visitor } from "@/lib/types";
 import { COUNTRY_NAMES } from "./countryPaths";
@@ -77,6 +78,14 @@ export default function RecentVisitors({
                   </td>
                   <td className="whitespace-nowrap py-2.5 text-right text-xs tabular-nums text-faint">
                     {new Date(r.visited_at).toLocaleString()}
+                  </td>
+                  <td className="whitespace-nowrap py-2.5 pl-4 text-right">
+                    <Link
+                      href={`/sites/${siteId}/visitors/${encodeURIComponent(r.ip)}`}
+                      className="rounded-lg bg-raised px-2.5 py-1 text-[11px] font-medium text-soft transition-colors hover:bg-indigo-500/15 hover:text-indigo-400"
+                    >
+                      Detail
+                    </Link>
                   </td>
                 </tr>
               ))}

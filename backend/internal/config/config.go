@@ -12,6 +12,7 @@ type Config struct {
 	JWTSecret    string
 	RedisURL     string
 	GeoCSV       string
+	ASNCSV       string
 	IPHashSalt   string
 	BufferSize   int
 	FlushEvery   time.Duration
@@ -34,6 +35,7 @@ func Load() *Config {
 		JWTSecret:    getenv("JWT_SECRET", "webstats-dev-secret-change-me"),
 		RedisURL:     os.Getenv("REDIS_URL"),
 		GeoCSV:       os.Getenv("GEO_CSV"),
+		ASNCSV:       os.Getenv("GEO_ASN_CSV"),
 		IPHashSalt:   getenv("IP_HASH_SALT", "webstats-salt"),
 		BufferSize:   envInt("BUFFER_SIZE", 4096),
 		FlushEvery:   envDur("FLUSH_EVERY", 5*time.Second),

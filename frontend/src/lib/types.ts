@@ -180,6 +180,25 @@ export type AdminStats = {
   events: number;
 };
 
+export type VisitorDetail = {
+  ip: string;
+  isp: string;
+  country: string;
+  browser: string;
+  os: string;
+  device: string;
+  screen: string;
+  lang: string;
+  session_id: string;
+  first_seen: string;
+  last_seen: string;
+  pageviews: number;
+  sessions: number;
+  paths: Row[];
+  history: Visitor[];
+  country_code: string;
+};
+
 export type Visitor = {
   ip: string;
   session_id: string;

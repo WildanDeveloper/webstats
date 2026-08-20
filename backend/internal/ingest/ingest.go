@@ -30,6 +30,7 @@ type Record struct {
 	Screen    string            `json:"screen"`
 	Lang      string            `json:"lang"`
 	Country   string            `json:"country"`
+	ISP       string            `json:"isp"`
 	IPHash    string            `json:"ip_hash"`
 	IP        string            `json:"ip"`
 	Ts        time.Time         `json:"ts"`
@@ -43,6 +44,7 @@ type Buffer struct {
 	cfg     *config.Config
 	db      *pgxpool.Pool
 	geo     *geo.Resolver
+	asn     *geo.ASNResolver
 	redis   *redis.Client
 	ch      chan Record
 	siteIDs map[string]string
@@ -50,11 +52,12 @@ type Buffer struct {
 	stop    chan struct{}
 }
 
-func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver) *Buffer {
+func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver, a *geo.ASNResolver) *Buffer {
 	b := &Buffer{
 		cfg:     cfg,
 		db:      db,
 		geo:     g,
+		asn:     a,
 		ch:      make(chan Record, cfg.BufferSize),
 		siteIDs: map[string]string{},
 		hashing: map[string]bool{},
@@ -179,7 +182,7 @@ func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 				Title: r.Title, Referrer: r.Referrer, ReferrerHost: hostOf(r.Referrer),
 				UA: r.UA, Browser: info.Browser, OS: info.OS, Device: info.Device,
 				Country: r.Country, Screen: r.Screen, Lang: r.Lang,
-				IPHash: r.IPHash, IP: r.IP, VisitedAt: r.Ts, UTM: r.UTM,
+				IPHash: r.IPHash, ISP: r.ISP, IP: r.IP, VisitedAt: r.Ts, UTM: r.UTM,
 			})
 			sites[r.SiteID] = true
 			d := r.Ts.UTC().Truncate(24 * time.Hour)
@@ -212,6 +215,10 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 	if b.geo != nil {
 		cc = b.geo.CountryCode(ip)
 	}
+	isp := ""
+	if b.asn != nil {
+		isp = b.asn.Org(ip)
+	}
 	ts := time.Now().UTC()
 	if t, ok := raw["ts"].(float64); ok && t > 0 {
 		ts = time.UnixMilli(int64(t)).UTC()
@@ -232,6 +239,7 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 		Screen:    str(raw["screen"]),
 		Lang:      str(raw["lang"]),
 		Country:   cc,
+		ISP:       isp,
 		IPHash:    ipHash,
 		IP:        ip,
 		Ts:        ts,
