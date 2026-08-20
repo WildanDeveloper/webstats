@@ -438,7 +438,7 @@ export default function StatsView(props: {
             <DonutChart title="Devices" rows={props.devices} onSelect={(k) => setFilter("device", k)} />
             <DonutChart title="Browsers" rows={props.browsers} onSelect={(k) => setFilter("browser", k)} />
             <DonutChart title="Operating systems" rows={props.os} onSelect={(k) => setFilter("os", k)} />
-            <DonutChart title="Countries" rows={props.countries} onSelect={(k) => setFilter("country", k)} />
+            <DonutChart title="Countries" rows={props.countries} onSelect={(k) => setFilter("country", k)} flags />
           </div>
 
           {props.campaigns.length > 0 && (

@@ -2,8 +2,22 @@
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import type { Row } from "@/lib/types";
+import { COUNTRY_NAMES } from "./countryPaths";
 
 const nf = new Intl.NumberFormat("en-US");
+
+function flagEmoji(cc: string) {
+  if (!cc || cc === "unknown" || cc.length !== 2) return "🌐";
+  return cc
+    .toUpperCase()
+    .replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
+}
+
+function countryLabel(cc: string) {
+  if (!cc || cc === "unknown") return "Unknown";
+  const name = COUNTRY_NAMES[cc];
+  return name ? `${flagEmoji(cc)} ${name}` : `${flagEmoji(cc)} ${cc}`;
+}
 
 const COLORS = [
   "#6366f1",
@@ -29,7 +43,7 @@ function Tip({ active, payload }: any) {
         borderColor: "var(--tip-border)",
       }}
     >
-      <span style={{ color: "var(--ink)", fontWeight: 500 }}>{d.name}</span>
+      <span style={{ color: "var(--ink)", fontWeight: 500 }}>{countryLabel(d.name)}</span>
       <span className="ml-2" style={{ color: "var(--soft)" }}>
         {nf.format(d.value)} ({d.payload.pct}%)
       </span>
@@ -41,10 +55,12 @@ export default function DonutChart({
   title,
   rows,
   onSelect,
+  flags,
 }: {
   title: string;
   rows: Row[];
   onSelect?: (key: string) => void;
+  flags?: boolean;
 }) {
   if (!rows.length) return null;
   const total = rows.reduce((s, r) => s + r.value, 0);
@@ -88,7 +104,9 @@ export default function DonutChart({
                 className="h-2 w-2 shrink-0 rounded-full"
                 style={{ background: d.color }}
               />
-              <span className={`min-w-0 flex-1 truncate ${onSelect ? "text-soft hover:text-indigo-400" : "text-soft"}`}>{d.name}</span>
+              <span className={`min-w-0 flex-1 truncate ${onSelect ? "text-soft hover:text-indigo-400" : "text-soft"}`}>
+                {flags ? countryLabel(d.name) : d.name}
+              </span>
               <span className="shrink-0 tabular-nums text-faint">{d.pct}%</span>
             </li>
           ))}
