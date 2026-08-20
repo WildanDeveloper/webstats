@@ -184,6 +184,10 @@ export type VisitorDetail = {
   ip: string;
   isp: string;
   country: string;
+  region: string;
+  city: string;
+  lat: number;
+  lon: number;
   browser: string;
   os: string;
   device: string;
@@ -203,6 +207,8 @@ export type Visitor = {
   ip: string;
   session_id: string;
   country: string;
+  region: string;
+  city: string;
   browser: string;
   os: string;
   device: string;

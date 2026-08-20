@@ -26,6 +26,11 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+const W = 720;
+const H = 360;
+const px = (lng: number) => ((lng + 180) / 360) * W;
+const py = (lat: number) => ((90 - lat) / 180) * H;
+
 export default function VisitorDetailView({
   siteId,
   token,
@@ -66,7 +71,6 @@ export default function VisitorDetailView({
   }, [siteId, token, ip]);
 
   const cc = d?.country_code || "";
-  const countryPath = cc ? COUNTRY_PATHS[cc] : "";
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 lg:px-10">
@@ -107,6 +111,8 @@ export default function VisitorDetailView({
               <h2 className="mb-3 text-sm font-semibold text-ink">Details</h2>
               <DetailRow label="ISP" value={d.isp === "unknown" ? "—" : d.isp} />
               <DetailRow label="Country" value={COUNTRY_NAMES[cc] || d.country} />
+              <DetailRow label="Region" value={d.region} />
+              <DetailRow label="City" value={d.city} />
               <DetailRow label="Browser" value={d.browser} />
               <DetailRow label="Operating system" value={d.os} />
               <DetailRow label="Device" value={d.device} />
@@ -121,19 +127,30 @@ export default function VisitorDetailView({
               <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
                 <IconShieldCheck className="h-4 w-4 text-indigo-500" /> Location
               </h2>
-              {countryPath ? (
-                <svg viewBox="0 0 720 360" className="w-full">
+              {d.lat !== 0 && d.lon !== 0 ? (
+                <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
                   <path
-                    d={COUNTRY_PATHS[cc]}
-                    fill="#6366f1"
-                    fillOpacity={0.85}
+                    d={COUNTRY_PATHS[cc] || ""}
+                    fill="currentColor"
+                    className="text-edge opacity-60"
                   />
+                  <circle cx={px(d.lon)} cy={py(d.lat)} r={7} fill="#6366f1" opacity={0.9} />
+                  <circle cx={px(d.lon)} cy={py(d.lat)} r={16} fill="#6366f1" opacity={0.25} />
+                  <text
+                    x={Math.min(Math.max(px(d.lon) + 12, 4), W - 60)}
+                    y={Math.max(py(d.lat) - 8, 12)}
+                    className="fill-ink"
+                    fontSize="11"
+                    fontWeight="600"
+                  >
+                    {d.city || d.region || d.country}
+                  </text>
                 </svg>
               ) : (
                 <p className="text-sm text-faint">Location unknown.</p>
               )}
               <p className="mt-3 text-xs text-faint">
-                {flagEmoji(cc)} {COUNTRY_NAMES[cc] || d.country || "Unknown"}
+                {flagEmoji(cc)} {[d.city, d.region, COUNTRY_NAMES[cc] || d.country].filter(Boolean).join(", ")}
               </p>
             </section>
           </div>

@@ -66,9 +66,11 @@ export default function RecentVisitors({
                   <td className="whitespace-nowrap py-2.5 pr-4 font-mono text-xs text-soft">
                     {r.ip}
                   </td>
-                  <td className="py-2.5 pr-4 text-xs text-soft">
+                  <td className="whitespace-nowrap py-2.5 pr-4 text-xs text-soft">
                     {flagEmoji(r.country)}{" "}
-                    <span className="text-faint">{COUNTRY_NAMES[r.country] || r.country}</span>
+                    <span className="text-faint">
+                      {r.city ? `${r.city}, ${COUNTRY_NAMES[r.country] || r.country}` : COUNTRY_NAMES[r.country] || r.country}
+                    </span>
                   </td>
                   <td className="whitespace-nowrap py-2.5 pr-4 text-xs text-faint">
                     {r.browser} · {r.os} · {r.device}

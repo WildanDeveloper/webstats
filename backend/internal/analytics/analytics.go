@@ -495,6 +495,8 @@ type Visitor struct {
 	IP        string    `json:"ip"`
 	SessionID string    `json:"session_id"`
 	Country   string    `json:"country"`
+	Region    string    `json:"region"`
+	City      string    `json:"city"`
 	Browser   string    `json:"browser"`
 	OS        string    `json:"os"`
 	Device    string    `json:"device"`
@@ -509,12 +511,13 @@ func (q *Queries) RecentVisitors(ctx context.Context, db *pgxpool.Pool, userID, 
 		return nil, pgx.ErrNoRows
 	}
 	rows, err := db.Query(ctx, `
-		SELECT ip, session_id, COALESCE(NULLIF(country, ''), 'unknown'),
+		SELECT DISTINCT ON (ip) ip, session_id, COALESCE(NULLIF(country, ''), 'unknown'),
+		       COALESCE(region, ''), COALESCE(city, ''),
 		       COALESCE(NULLIF(browser, ''), 'unknown'), COALESCE(NULLIF(os, ''), 'unknown'),
 		       COALESCE(NULLIF(device, ''), 'unknown'), COALESCE(path, '/'), visited_at
 		FROM pageviews
 		WHERE site_id = $1 AND ip <> ''
-		ORDER BY visited_at DESC LIMIT $2`, siteID, limit)
+		ORDER BY ip, visited_at DESC LIMIT $2`, siteID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -522,7 +525,7 @@ func (q *Queries) RecentVisitors(ctx context.Context, db *pgxpool.Pool, userID, 
 	out := make([]Visitor, 0)
 	for rows.Next() {
 		var v Visitor
-		if err := rows.Scan(&v.IP, &v.SessionID, &v.Country, &v.Browser, &v.OS, &v.Device, &v.Path, &v.VisitedAt); err != nil {
+		if err := rows.Scan(&v.IP, &v.SessionID, &v.Country, &v.Region, &v.City, &v.Browser, &v.OS, &v.Device, &v.Path, &v.VisitedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -534,6 +537,10 @@ type VisitorDetail struct {
 	IP          string    `json:"ip"`
 	ISP         string    `json:"isp"`
 	Country     string    `json:"country"`
+	Region      string    `json:"region"`
+	City        string    `json:"city"`
+	Lat         float64   `json:"lat"`
+	Lon         float64   `json:"lon"`
 	Browser     string    `json:"browser"`
 	OS          string    `json:"os"`
 	Device      string    `json:"device"`
@@ -544,7 +551,7 @@ type VisitorDetail struct {
 	LastSeen    time.Time `json:"last_seen"`
 	Pageviews   int64     `json:"pageviews"`
 	Sessions    int64     `json:"sessions"`
-Paths       []model.Row  `json:"paths"`
+	Paths       []model.Row  `json:"paths"`
 	History     []Visitor `json:"history"`
 	CountryCode string    `json:"country_code"`
 }
@@ -559,6 +566,8 @@ func (q *Queries) VisitorDetail(ctx context.Context, db *pgxpool.Pool, userID, s
 	err := db.QueryRow(ctx, `
 		SELECT ip, COALESCE(NULLIF(MAX(isp), ''), 'unknown'),
 		       COALESCE(NULLIF(MAX(country), ''), 'unknown'),
+		       COALESCE(MAX(region), ''), COALESCE(MAX(city), ''),
+		       COALESCE(MAX(lat), 0), COALESCE(MAX(lon), 0),
 		       COALESCE(NULLIF(MAX(browser), ''), 'unknown'),
 		       COALESCE(NULLIF(MAX(os), ''), 'unknown'),
 		       COALESCE(NULLIF(MAX(device), ''), 'unknown'),
@@ -567,7 +576,8 @@ func (q *Queries) VisitorDetail(ctx context.Context, db *pgxpool.Pool, userID, s
 		FROM pageviews
 		WHERE site_id = $1 AND ip = $2
 		GROUP BY ip`, siteID, ip).
-		Scan(&d.IP, &d.ISP, &d.Country, &d.Browser, &d.OS, &d.Device, &d.Screen, &d.Lang,
+		Scan(&d.IP, &d.ISP, &d.Country, &d.Region, &d.City, &d.Lat, &d.Lon,
+			&d.Browser, &d.OS, &d.Device, &d.Screen, &d.Lang,
 			&d.FirstSeen, &d.LastSeen, &d.Pageviews, &d.Sessions)
 	if err != nil {
 		return d, err
@@ -597,6 +607,7 @@ func (q *Queries) VisitorDetail(ctx context.Context, db *pgxpool.Pool, userID, s
 	}
 	rows2, err := db.Query(ctx, `
 		SELECT ip, session_id, COALESCE(NULLIF(country, ''), 'unknown'),
+		       COALESCE(region, ''), COALESCE(city, ''),
 		       COALESCE(NULLIF(browser, ''), 'unknown'), COALESCE(NULLIF(os, ''), 'unknown'),
 		       COALESCE(NULLIF(device, ''), 'unknown'), COALESCE(path, '/'), visited_at
 		FROM pageviews WHERE site_id = $1 AND ip = $2
@@ -608,7 +619,7 @@ func (q *Queries) VisitorDetail(ctx context.Context, db *pgxpool.Pool, userID, s
 	d.History = make([]Visitor, 0)
 	for rows2.Next() {
 		var v Visitor
-		if err := rows2.Scan(&v.IP, &v.SessionID, &v.Country, &v.Browser, &v.OS, &v.Device, &v.Path, &v.VisitedAt); err != nil {
+		if err := rows2.Scan(&v.IP, &v.SessionID, &v.Country, &v.Region, &v.City, &v.Browser, &v.OS, &v.Device, &v.Path, &v.VisitedAt); err != nil {
 			return d, err
 		}
 		d.History = append(d.History, v)
