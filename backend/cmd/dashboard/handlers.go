@@ -648,20 +648,26 @@ func visitorDetailHandler(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
-		if out.Lat == 0 {
+		needsEnrich := out.Lat == 0
+		if needsEnrich {
 			if r := enrichVisitorIP(c.Context(), db, c.Params("ip")); r.Status == "success" {
 				if out.ISP == "unknown" && r.Isp != "" {
 					out.ISP = r.Isp
+				}
+				if r.CountryCode != "" {
+					out.Country = r.CountryCode
+					out.CountryCode = r.CountryCode
 				}
 				out.Region = r.RegionName
 				out.City = r.City
 				out.Lat = r.Lat
 				out.Lon = r.Lon
-				if out.Country == "unknown" && r.CountryCode != "" {
-					out.Country = r.CountryCode
-					out.CountryCode = r.CountryCode
-				}
 			}
+		}
+		if isProxy, proxyName := isProxyProvider(out.ISP); isProxy {
+			out.ISP = proxyName + " (VPN/Proxy)"
+			out.City = ""
+			out.Region = ""
 		}
 		return c.JSON(out)
 	}

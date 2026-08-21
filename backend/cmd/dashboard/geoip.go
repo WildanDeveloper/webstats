@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +26,23 @@ type ipapiResult struct {
 }
 
 var geoHTTP = &http.Client{Timeout: 8 * time.Second}
+
+var proxyProviders = []string{
+	"cloudflare", "google", "amazon", "microsoft", "oracle", "akamai", "fastly", "incapsula", "imperva", "stackpath",
+}
+
+func isProxyProvider(org string) (bool, string) {
+	if org == "" {
+		return false, ""
+	}
+	lower := strings.ToLower(org)
+	for _, p := range proxyProviders {
+		if strings.Contains(lower, p) {
+			return true, p
+		}
+	}
+	return false, ""
+}
 
 // enrichVisitorIP resolves city/region/coords/ISP for an IP via ip-api.com
 // and caches the result back into the pageviews rows for that IP.
@@ -48,8 +66,9 @@ func enrichVisitorIP(ctx context.Context, db *pgxpool.Pool, ip string) ipapiResu
 	}
 	_, err = db.Exec(ctx, `UPDATE pageviews
 		SET isp = CASE WHEN isp = '' THEN $2 ELSE isp END,
+		    country = $7,
 		    region = $3, city = $4, lat = $5, lon = $6
-		WHERE ip = $1`, ip, r.Isp, r.RegionName, r.City, r.Lat, r.Lon)
+		WHERE ip = $1`, ip, r.Isp, r.RegionName, r.City, r.Lat, r.Lon, r.CountryCode)
 	if err != nil {
 		return r
 	}
