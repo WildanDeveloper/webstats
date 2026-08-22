@@ -360,6 +360,8 @@ func updateSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 func retentionLoop(ctx context.Context, pool *pgxpool.Pool) {
 	ticker := time.NewTicker(time.Hour)
 	run := func() {
+		// Expired auth sessions would pile up forever otherwise.
+		pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
 		rows, err := pool.Query(ctx, `SELECT site_id, retention_days FROM site_settings WHERE retention_days > 0`)
 		if err != nil {
 			return
