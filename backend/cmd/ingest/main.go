@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -16,7 +20,9 @@ import (
 func main() {
 	cfg := config.Load()
 
-	ctx := context.Background()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
 	pool, err := db.Connect(ctx, cfg.DBURL)
 	if err != nil {
 		log.Fatalf("db connect: %v", err)
@@ -34,10 +40,15 @@ func main() {
 
 	buf := ingest.NewBuffer(cfg, pool, g, asn)
 	buf.Run(ctx)
-	defer buf.Stop()
 
 	app := fiber.New(fiber.Config{ProxyHeader: "X-Forwarded-For"})
-	app.Use(cors.New(cors.Config{AllowMethods: "GET,POST,OPTIONS", AllowHeaders: "Content-Type", AllowCredentials: true, AllowOriginsFunc: func(origin string) bool { return true }}))
+	// The tracker never sends credentials, so keep CORS permissive but do NOT
+	// combine arbitrary reflected origins with AllowCredentials.
+	app.Use(cors.New(cors.Config{
+		AllowMethods:     "GET,POST,OPTIONS",
+		AllowHeaders:     "Content-Type",
+		AllowOriginsFunc: func(origin string) bool { return true },
+	}))
 
 	app.Get("/track.js", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "application/javascript; charset=utf-8")
@@ -50,6 +61,22 @@ func main() {
 
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"ok": true}) })
 
+	// On SIGINT/SIGTERM: stop accepting connections, then give the flusher a
+	// chance to drain the queue so buffered events are not lost.
+	go func() {
+		<-ctx.Done()
+		log.Printf("shutting down ingestion API…")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = app.ShutdownWithContext(shutdownCtx)
+	}()
+
 	log.Printf("ingestion API listening on :%s", cfg.Port)
-	log.Fatal(app.Listen(cfg.Bind + ":" + cfg.Port))
+	if err := app.Listen(cfg.Bind+":"+cfg.Port); err != nil {
+		log.Fatalf("listen: %v", err)
+	}
+
+	// Flush anything still buffered before exit (must not be deferred: it
+	// closes a channel and must run exactly once).
+	buf.Stop()
 }

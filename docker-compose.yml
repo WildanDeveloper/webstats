@@ -32,6 +32,8 @@ services:
     environment:
       PORT: "8085"
       DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
+      GEO_CSV: /app/data/geo.csv
+      GEO_ASN_CSV: /app/data/asn.csv
     ports:
       - "8085:8085"
     depends_on:

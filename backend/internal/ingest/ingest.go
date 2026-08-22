@@ -223,10 +223,13 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 	if t, ok := raw["ts"].(float64); ok && t > 0 {
 		ts = time.UnixMilli(int64(t)).UTC()
 	}
-	ipHash := hashIP(ip, b.cfg.IPHashSalt)
+	// Geo/ISP are resolved from the live request IP above, but the raw IP is
+	// never persisted. When IP hashing is enabled we keep only a salted hash
+	// (used as the visitor identifier); when disabled we keep nothing.
 	siteID := str(raw["site_id"])
-	if !b.IPHashing(context.Background(), siteID) {
-		ipHash = ""
+	ipHash := ""
+	if b.IPHashing(context.Background(), siteID) {
+		ipHash = hashIP(ip, b.cfg.IPHashSalt)
 	}
 	return Record{
 		Kind:      str(raw["kind"]),
@@ -241,7 +244,7 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 		Country:   cc,
 		ISP:       isp,
 		IPHash:    ipHash,
-		IP:        ip,
+		IP:        ipHash,
 		Ts:        ts,
 		EventName: str(raw["event_name"]),
 		URL:       str(raw["url"]),

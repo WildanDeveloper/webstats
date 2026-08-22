@@ -32,7 +32,9 @@ func main() {
 	}
 	rdb := redis.NewClient(opt)
 
-	buf := ingest.NewBuffer(cfg, pool, &geo.Resolver{})
+	// Records arriving from Redis were already geo-enriched by the ingest
+	// service, so the worker uses empty resolvers.
+	buf := ingest.NewBuffer(cfg, pool, &geo.Resolver{}, &geo.ASNResolver{})
 
 	log.Printf("worker started, draining %s (batch=%d)", ingest.RedisList, cfg.BatchSize)
 
