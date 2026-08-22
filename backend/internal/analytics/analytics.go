@@ -135,20 +135,20 @@ func InsertEvents(ctx context.Context, db *pgxpool.Pool, rows []EventRowIn) erro
 func AggregateDaily(ctx context.Context, db *pgxpool.Pool, siteID string, from, to time.Time) error {
 	_, err := db.Exec(ctx, `
 		WITH sess AS (
-			SELECT session_id, count(*) AS c
+			SELECT site_id, visited_at::date AS day, session_id, count(*) AS c
 			FROM pageviews
 			WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3
-			GROUP BY session_id
+			GROUP BY 1, 2, 3
 		)
 		INSERT INTO site_daily (site_id, day, pageviews, visitors, sessions, bounces)
-		SELECT p.site_id, p.visited_at::date,
-			count(*),
-			count(DISTINCT p.session_id),
-			count(DISTINCT p.session_id),
-			(SELECT count(*) FROM sess WHERE c = 1)
-		FROM pageviews p
-		WHERE p.site_id = $1 AND p.visited_at >= $2 AND p.visited_at < $3
-		GROUP BY p.site_id, p.visited_at::date
+		SELECT site_id,
+		       day,
+		       sum(c),
+		       count(*),
+		       count(*),
+		       count(*) FILTER (WHERE c = 1)
+		FROM sess
+		GROUP BY site_id, day
 		ON CONFLICT (site_id, day) DO UPDATE SET
 			pageviews = EXCLUDED.pageviews,
 			visitors  = EXCLUDED.visitors,
@@ -202,6 +202,27 @@ func PeriodBounds(period, fromStr, toStr string) (from time.Time, to time.Time, 
 	return from, to, hourly
 }
 
+// earliestVisit returns the oldest pageview timestamp for a site, used to
+// clamp open-ended periods ("all") so series generation stays bounded.
+func earliestVisit(ctx context.Context, db *pgxpool.Pool, siteID string) time.Time {
+	var t time.Time
+	_ = db.QueryRow(ctx, `SELECT MIN(visited_at) FROM pageviews WHERE site_id = $1`, siteID).Scan(&t)
+	return t
+}
+
+// clampFrom resolves a zero "from" (open-ended period) against stored data.
+// When there is no data at all it collapses the window so queries return
+// empty results instead of scanning unbounded ranges.
+func clampFrom(ctx context.Context, db *pgxpool.Pool, siteID string, from, to time.Time) time.Time {
+	if !from.IsZero() {
+		return from
+	}
+	if e := earliestVisit(ctx, db, siteID); !e.IsZero() {
+		return e
+	}
+	return to
+}
+
 func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) (model.Overview, error) {
 	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return model.Overview{}, err
@@ -209,6 +230,7 @@ func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID
 		return model.Overview{}, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 
 	var out model.Overview
 	prevFrom := from.Add(-(to.Sub(from)))
@@ -250,6 +272,7 @@ func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, site
 		return nil, pgx.ErrNoRows
 	}
 	from, to, hourly := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	trunc, layout := "day", "YYYY-MM-DD"
 	if hourly {
 		trunc, layout = "hour", "YYYY-MM-DD HH24:00"
@@ -338,6 +361,7 @@ func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, per
 		return nil, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	order := "count(*) DESC"
 	if column == "referrer" {
 		column = "referrer_host"
@@ -381,8 +405,9 @@ func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteI
 		return nil, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	rows, err := db.Query(ctx, `
-		SELECT name, count(*) FROM events
+		SELECT name, count(*), COALESCE(max(created_at)::text, '') FROM events
 		WHERE site_id = $1 AND created_at >= $2 AND created_at < $3
 		GROUP BY name ORDER BY count(*) DESC LIMIT 20`,
 		siteID, from, to)
@@ -393,7 +418,7 @@ func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteI
 	out := make([]model.EventRow, 0)
 	for rows.Next() {
 		var r model.EventRow
-		if err := rows.Scan(&r.Name, &r.Count); err != nil {
+		if err := rows.Scan(&r.Name, &r.Count, &r.LastAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -511,13 +536,21 @@ func (q *Queries) RecentVisitors(ctx context.Context, db *pgxpool.Pool, userID, 
 		return nil, pgx.ErrNoRows
 	}
 	rows, err := db.Query(ctx, `
-		SELECT DISTINCT ON (ip) ip, session_id, COALESCE(NULLIF(country, ''), 'unknown'),
-		       COALESCE(region, ''), COALESCE(city, ''),
-		       COALESCE(NULLIF(browser, ''), 'unknown'), COALESCE(NULLIF(os, ''), 'unknown'),
-		       COALESCE(NULLIF(device, ''), 'unknown'), COALESCE(path, '/'), visited_at
-		FROM pageviews
-		WHERE site_id = $1 AND ip <> ''
-		ORDER BY ip, visited_at DESC LIMIT $2`, siteID, limit)
+		SELECT ip, session_id, country, region, city, browser, os, device, path, visited_at
+		FROM (
+			SELECT DISTINCT ON (ip)
+			       ip, session_id, COALESCE(NULLIF(country, ''), 'unknown') AS country,
+			       COALESCE(region, '') AS region, COALESCE(city, '') AS city,
+			       COALESCE(NULLIF(browser, ''), 'unknown') AS browser,
+			       COALESCE(NULLIF(os, ''), 'unknown') AS os,
+			       COALESCE(NULLIF(device, ''), 'unknown') AS device,
+			       COALESCE(path, '/') AS path, visited_at
+			FROM pageviews
+			WHERE site_id = $1 AND ip <> ''
+			ORDER BY ip, visited_at DESC
+		) latest
+		ORDER BY latest.visited_at DESC
+		LIMIT $2`, siteID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -635,6 +668,7 @@ func (q *Queries) World(ctx context.Context, db *pgxpool.Pool, userID, siteID, p
 		return nil, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	cond, fargs := f.fragment(3)
 	args := []any{siteID, from, to}
 	args = append(args, fargs...)
@@ -712,6 +746,21 @@ func (q *Queries) ExportCSV(ctx context.Context, db *pgxpool.Pool, userID, siteI
 
 func (q *Queries) RootOverview(ctx context.Context, db *pgxpool.Pool, userID, period, fromStr, toStr string) (RootOverview, error) {
 	from, to, hourly := PeriodBounds(period, fromStr, toStr)
+	if from.IsZero() {
+		// Open-ended period: bound it by the oldest pageview across the
+		// user's sites so the series stays a sane size.
+		var e time.Time
+		_ = db.QueryRow(ctx, `
+			SELECT MIN(p.visited_at) FROM pageviews p
+			JOIN sites s ON s.id = p.site_id
+			WHERE s.user_id = $1 OR s.id IN (SELECT site_id FROM site_members WHERE user_id = $1)`,
+			userID).Scan(&e)
+		if !e.IsZero() {
+			from = e.UTC().Truncate(24 * time.Hour)
+		} else {
+			from = to
+		}
+	}
 	trunc, sqlLayout := "day", "YYYY-MM-DD"
 	if hourly {
 		trunc, sqlLayout = "hour", "YYYY-MM-DD HH24:00"
@@ -828,6 +877,7 @@ func (q *Queries) Campaigns(ctx context.Context, db *pgxpool.Pool, userID, siteI
 		return nil, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	cond, fargs := f.fragment(3)
 	args := []any{siteID, from, to}
 	args = append(args, fargs...)
@@ -904,6 +954,7 @@ func (q *Queries) GoalSummaries(ctx context.Context, db *pgxpool.Pool, userID, s
 		return nil, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	cond, fargs := f.fragment(3)
 	args := []any{siteID, from, to}
 	args = append(args, fargs...)
@@ -957,6 +1008,7 @@ func (q *Queries) Funnel(ctx context.Context, db *pgxpool.Pool, userID, siteID, 
 		return out, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	cond, fargs := f.fragment(4)
 	for i := range paths {
 		step := paths[:i+1]
@@ -994,6 +1046,7 @@ func (q *Queries) EventDetails(ctx context.Context, db *pgxpool.Pool, userID, si
 		return nil, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	rows, err := db.Query(ctx, `
 		SELECT e.name, count(*), count(DISTINCT e.session_id),
 		       COALESCE(avg(NULLIF((e.props->>'value')::numeric, 0)), 0),
@@ -1025,6 +1078,7 @@ func (q *Queries) EventOccurrences(ctx context.Context, db *pgxpool.Pool, userID
 		return nil, pgx.ErrNoRows
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
 	rows, err := db.Query(ctx, `
 		SELECT name, session_id, COALESCE(url, ''), COALESCE(props, '{}'::jsonb), created_at
 		FROM events
