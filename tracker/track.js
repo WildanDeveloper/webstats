@@ -179,6 +179,40 @@
     }
     hook();
     flushQueue();
+    setupAutoEvents();
+  }
+
+  function setupAutoEvents() {
+    var wantOutbound = script.getAttribute('data-outbound') != null;
+    var wantDownload = script.getAttribute('data-download') != null;
+    var wantScroll = script.getAttribute('data-scroll') != null;
+    if (!wantOutbound && !wantDownload && !wantScroll) return;
+
+    if (wantOutbound || wantDownload) {
+      var DL_RE = /\.(pdf|zip|rar|7z|tar|gz|tgz|docx?|xlsx?|pptx?|csv|mp[34]|m4a|wav|ogg|webm|avi|mov|dmg|exe|apk)$/i;
+      document.addEventListener('click', function (e) {
+        var t = e.target;
+        var a = t && t.closest ? t.closest('a[href]') : null;
+        if (!a) return;
+        var href = a.getAttribute('href') || '';
+        if (href.indexOf('http') !== 0) return;
+        var clean = href.split('?')[0].split('#')[0];
+        if (wantDownload && DL_RE.test(clean)) { event('download', { url: href }); return; }
+        if (wantOutbound && a.hostname && a.hostname !== location.hostname) event('outbound', { url: href });
+      }, true);
+    }
+
+    if (wantScroll) {
+      var seen = {};
+      window.addEventListener('scroll', function () {
+        var d = document.documentElement;
+        var max = d.scrollHeight - window.innerHeight;
+        var pct = max <= 0 ? 100 : Math.round(((window.scrollY || d.scrollTop) / max) * 100);
+        [25, 50, 75, 100].forEach(function (t) {
+          if (pct >= t && !seen[t]) { seen[t] = 1; event('scroll', { depth: t }); }
+        });
+      }, { passive: true });
+    }
   }
 
   window.webstats = { event: event, pageview: pageview, setOptout: function (v) { try { localStorage.setItem(OPTOUT, v ? '1' : '0'); } catch (e) {} } };
