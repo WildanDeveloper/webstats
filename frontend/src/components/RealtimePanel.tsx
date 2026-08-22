@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiFetch } from "@/lib/auth";
+import { apiFetch, CLIENT_API_URL } from "@/lib/auth";
 import type { Realtime } from "@/lib/types";
 import { IconBolt, IconMouse, IconUsers } from "@/components/icons";
 
@@ -17,6 +17,9 @@ export default function RealtimePanel({
 
   useEffect(() => {
     let active = true;
+    let es: EventSource | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
+
     async function load() {
       try {
         const r = await apiFetch<Realtime>(`/api/sites/${siteId}/realtime`, token);
@@ -28,11 +31,39 @@ export default function RealtimePanel({
         if (active) setError(e.message);
       }
     }
-    load();
-    const t = setInterval(load, 30000);
+
+    function startPolling() {
+      if (poll || !active) return;
+      load();
+      poll = setInterval(load, 30000);
+    }
+
+    try {
+      // Server-Sent Events stream (10s push). Falls back to polling if the
+      // browser/proxy can't hold the connection open.
+      es = new EventSource(
+        `${CLIENT_API_URL}/api/sites/${siteId}/realtime/stream?token=${encodeURIComponent(token)}`,
+      );
+      es.onmessage = (ev) => {
+        if (!active) return;
+        try {
+          setData(JSON.parse(ev.data));
+          setError("");
+        } catch {}
+      };
+      es.onerror = () => {
+        es?.close();
+        es = null;
+        startPolling();
+      };
+    } catch {
+      startPolling();
+    }
+
     return () => {
       active = false;
-      clearInterval(t);
+      es?.close();
+      if (poll) clearInterval(poll);
     };
   }, [token, siteId]);
 

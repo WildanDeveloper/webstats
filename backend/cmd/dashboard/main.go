@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -62,6 +63,7 @@ func main() {
 	api.Post("/auth/logout", authMgr.Middleware(), logoutHandler(pool, authMgr))
 	api.Get("/invites/:token", inviteInfoHandler(pool))
 	api.Post("/invites/:token", acceptInviteHandler(pool, authMgr))
+	api.Get("/unsubscribe/:token", unsubscribeHandler(pool))
 
 	pub := api.Group("/public")
 	pub.Get("/:token/overview", publicOverviewHandler(pool))
@@ -101,6 +103,7 @@ func main() {
 	stats.Get("/countries", topHandler(pool, "country"))
 	stats.Get("/events", eventsHandler(pool))
 	stats.Get("/realtime", realtimeHandler(pool))
+	stats.Get("/realtime/stream", realtimeStreamHandler(pool, authMgr))
 	stats.Get("/visitors", visitorsHandler(pool))
 	stats.Get("/visitors/:ip", visitorDetailHandler(pool))
 	stats.Get("/checks", checksHandler(pool))
@@ -116,7 +119,7 @@ func main() {
 	stats.Get("/events/:name", eventOccurrencesHandler(pool))
 	stats.Get("/members", membersHandler(pool))
 	stats.Delete("/members/:user_id", removeMemberHandler(pool))
-	stats.Post("/invites", createInviteHandler(pool))
+	stats.Post("/invites", createInviteHandler(pool, cfg))
 	stats.Get("/invites", listInvitesHandler(pool))
 	stats.Delete("/invites/:invite_id", deleteInviteHandler(pool))
 	stats.Get("/settings", getSettingsHandler(pool))
@@ -154,7 +157,7 @@ func main() {
 	notif.Post("/reports", createReportHandler(pool))
 	notif.Patch("/reports/:id", updateReportHandler(pool))
 	notif.Delete("/reports/:id", deleteReportHandler(pool))
-	notif.Post("/reports/:id/test", testReportHandler(pool))
+	notif.Post("/reports/:id/test", testReportHandler(pool, cfg))
 
 	admin := authed.Group("/admin", authMgr.AdminOnly())
 	admin.Get("/users", listUsersHandler(pool))
@@ -168,7 +171,7 @@ func main() {
 	go monitorLoop(ctx, pool)
 	go anomalyLoop(ctx, pool)
 	go retentionLoop(ctx, pool)
-	go reportLoop(ctx, pool)
+	go reportLoop(ctx, pool, cfg)
 
 	log.Printf("dashboard API listening on :%s", cfg.Port)
 	log.Fatal(app.Listen(cfg.Bind + ":" + cfg.Port))
@@ -196,24 +199,34 @@ func uptimeLoop(ctx context.Context, pool *pgxpool.Pool) {
 			}
 		}
 		rows.Close()
+		// Check sites concurrently so one slow domain can't delay the rest.
+		sem := make(chan struct{}, 8)
+		var wg sync.WaitGroup
 		for _, s := range sites {
-			url := "https://" + s.domain
-			if !strings.Contains(s.domain, ".") {
-				url = "http://" + s.domain
-			}
-			start := time.Now()
-			resp, err := client.Get(url)
-			status := "down"
-			latency := time.Since(start).Milliseconds()
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode < 500 {
-					status = "up"
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(s site) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				url := "https://" + s.domain
+				if !strings.Contains(s.domain, ".") {
+					url = "http://" + s.domain
 				}
-			}
-			pool.Exec(ctx, `INSERT INTO site_checks (site_id, status, latency_ms) VALUES ($1, $2, $3)`,
-				s.id, status, latency)
+				start := time.Now()
+				resp, err := client.Get(url)
+				status := "down"
+				latency := time.Since(start).Milliseconds()
+				if err == nil {
+					resp.Body.Close()
+					if resp.StatusCode < 500 {
+						status = "up"
+					}
+				}
+				pool.Exec(ctx, `INSERT INTO site_checks (site_id, status, latency_ms) VALUES ($1, $2, $3)`,
+					s.id, status, latency)
+			}(s)
 		}
+		wg.Wait()
 	}
 	run()
 	for {
