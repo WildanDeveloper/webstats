@@ -1,58 +1,48 @@
 # WebStats
 
-Open-source web analytics — tracking script vanilla JS (<5kb), backend Go
-(Fiber), PostgreSQL, dashboard Next.js (Tailwind + Recharts).
+Open-source web analytics — lightweight tracking script (<5kb), Go backend
+(Fiber + PostgreSQL), Next.js dashboard (Tailwind + Recharts).
 
-```
-flowchart TD
-    A1..A3[Web A/B/C] -->|1 line script| S[track.js <5kb]
-    S -->|POST /api/collect| B[Ingestion API Go/Fiber]
-    B -->|push| Q[Redis (optional)]
-    B -->|direct write| D2[(PostgreSQL)]
-    Q --> W[Worker Go - batch insert]
-    W --> D2
-    F[Dashboard API Go] --> D1[(PostgreSQL: users, sites)]
-    F --> D2[(PostgreSQL: pageviews, events)]
-    G[Next.js dashboard] <--> F
-    H[User/Admin] --> G
-```
+<p align="center">
+  <img src=".github/assets/dashboard.png" alt="WebStats dashboard" width="820">
+</p>
 
-## Features
+## ✨ Highlights
 
-- Tracking script that installs with a single line of HTML
-- Per-site dashboards with visitor trends, top pages, referrers, devices,
-  browsers, OS, countries and custom events
-- Realtime panel: visitors and pageviews from the last 5 minutes, auto-refreshing
-- World map of your visitors (with optional GeoIP lookup)
-- Custom date ranges (from/to) and comparison badges against the previous period
-- CSV export for any site and period
-- Uptime monitoring: every site is checked every minute, with online/offline
-  badges and latency on each site
-- Alerts & notifications: per-site rules for **site down**, **site back
-  online** and **traffic spikes** (last hour vs. 7-day hourly average,
-  threshold + cooldown), delivered by webhook (optional shared secret) or
-  email through your own provider
-- Email providers: SMTP (any host, STARTTLS/SSL — works with Mailtrap sandbox,
-  Gmail, SES, ...), Resend, SendGrid, Mailgun, Postmark and Brevo — you pick
-  the provider per rule, test delivery from the UI, and see a delivery log
-- Multi-site root dashboard with a colored area chart per website
-- Admin panel: manage users and roles (admin/user), reset passwords, delete
-  accounts
-- Per-site settings: rename, change domain, pick a chart color, check the
-  SSL certificate of the domain, and copy the install script
-- Light / dark mode toggle
-- IP hashing (SHA-256 + salt), opt-out support, optional Geo lookup
+- **One-line tracking script** — SPA-aware (pushState/popstate/**hashchange**), bot filtering, and opt-in auto events (`data-outbound`, `data-download`, `data-scroll`)
+- **Multi-site dashboard** — traffic trends with previous-period comparison, realtime panel over **SSE**, top pages/referrers/geo/device breakdowns
+- **Uptime monitoring & public status page** — parallel checks, 90-day uptime bars
+- **Alerts & scheduled reports** — webhook or email (SMTP, Resend, SendGrid, Mailgun, Postmark, Brevo), one-click unsubscribe links
+- **Goals, funnels (ordered steps) and UTM campaign tracking**
+- **Team features** — invites by email, per-site members, admin panel
+- **Privacy-first** — salted IP hashing toggle, retention windows, visitor opt-out cookie
+- **Versioned releases** — the dashboard shows the installed version and notifies you when a newer release is published on GitHub
+- Light/dark mode · CSV export · SSL certificate checker
+
+| Dashboard | Site stats |
+|---|---|
+| ![Dashboard](.github/assets/dashboard.png) | ![Site stats](.github/assets/site-stats.png) |
+
+| Public status page | Login |
+|---|---|
+| ![Status page](.github/assets/status-page.png) | ![Login](.github/assets/login.png) |
 
 ## Architecture
 
 | Component | Technology | Location |
 |---|---|---|
-| Tracking script | Vanilla JS, 2.3kb minified | `tracker/track.js` → `backend/internal/static/track.min.js` |
-| Ingestion API | Go + Fiber + pgx | `backend/cmd/ingest` (port 8085) |
-| Worker (batch insert) | Go, BRPOP Redis, required with queue | `backend/cmd/worker` |
-| Dashboard API | Go + Fiber + JWT (golang-jwt) | `backend/cmd/dashboard` (port 8086) |
-| Database | PostgreSQL (pgcrypto) | `db/migrations` |
+| Tracking script | Vanilla JS, ~3kb minified | `tracker/track.js` → `backend/internal/static/track.min.js` |
+| Ingestion API | Go + Fiber + pgx (COPY-based bulk inserts) | `backend/cmd/ingest` (port 8085) |
+| Worker (optional queue) | Go, BRPOP Redis | `backend/cmd/worker` |
+| Dashboard API | Go + Fiber + JWT + server-side sessions | `backend/cmd/dashboard` (port 8086) |
+| Database | PostgreSQL (pgcrypto), monthly-partitioned pageviews | `db/migrations` |
 | Dashboard Web | Next.js 14 + Tailwind + Recharts + NextAuth | `frontend` (port 3000) |
+
+```
+Websites → track.js → POST /api/collect → Ingestion API → PostgreSQL
+                                  └──→ Redis queue → Worker → PostgreSQL   (optional)
+Dashboard Web ←→ Dashboard API :8086 ←→ PostgreSQL
+```
 
 ## Getting started (development)
 
@@ -61,89 +51,70 @@ flowchart TD
 docker compose up -d db
 ./db/migrate.sh
 
-# 2. Backend (terminal 1: ingestion, terminal 2: dashboard)
-cd backend && go run ./cmd/ingest       # :8085
-cd backend && go run ./cmd/dashboard    # :8086
+# 2. Backend
+cd backend
+go run ./cmd/dashboard     # API       :8086
+go run ./cmd/ingest        # collector :8085
 
 # 3. Frontend
-cd frontend && npm install && npm run dev   # :3000
+cd frontend
+npm install
+NEXT_PUBLIC_API_URL=http://localhost:8086 npm run dev   # :3000
+
+# 4. Open http://localhost:3000 and sign in
+#    default seed: admin@webstats.dev / admin123 (dev only!)
 ```
 
-Open http://localhost:3000 and sign in. A default admin account is seeded by
-the migrations:
-
-```
-Email:    admin@webstats.dev
-Password: admin123
-```
-
-Create a site, copy the one-line install script into your website:
-
-```html
-<script async src="http://localhost:8085/track.js" data-site="SITE_KEY"></script>
-```
-
-## Queue mode (optional, for scale)
+### Production with Docker
 
 ```bash
-docker compose --profile queue up -d        # postgres + redis
-REDIS_URL=redis://localhost:6379 PORT=8085 go run ./cmd/ingest
-REDIS_URL=redis://localhost:6379 go run ./cmd/worker
+docker compose --profile full up -d --build
+# starts: db → migrate → ingest(:8085) + dashboard(:8086) + web(:3000)
+# add the Redis worker instead of direct writes:
+docker compose --profile full --profile queue up -d --build
 ```
 
-Without `REDIS_URL`, ingestion buffers in memory (goroutine channel) and
-flushes batches every 5 seconds / 100 records — the `direct write` path.
+Put a reverse proxy (Caddy/Traefik/Nginx) in front for TLS and route:
 
-## API overview
+| Path | Upstream |
+|---|---|
+| `/track.js`, `/api/collect`, `/api/event` | `ingest:8085` |
+| everything else | `web:3000` (which calls `dashboard:8086`) |
 
-- `POST /api/collect`, `POST /api/event` — called by the tracker, no auth (site_key is the key)
-- `POST /api/auth/login|logout`, `GET /api/auth/me` — JWT
-- `GET/POST/PATCH/DELETE /api/sites`, `GET /api/sites/:id/ssl-check`
-- `GET /api/sites/:id/overview|timeseries|pages|referrers|devices|browsers|os|countries|events?period=24h|7d|30d|all`
-- `GET /api/sites/:id/realtime` — last 5 minutes
-- `GET /api/sites/:id/world` — country counts with coordinates
-- `GET /api/sites/:id/checks` — uptime check history
-- `GET /api/sites/:id/export` — CSV download
-- All analytics endpoints accept `from` & `to` (YYYY-MM-DD) for custom ranges
-- `GET /api/overview` — root dashboard, multi-site series
-- Notifications: `GET/POST/PATCH/DELETE /api/notifications/providers` (+
-  `POST /:id/test`), `GET/POST/PATCH/DELETE /api/notifications/rules` (+
-  `POST /:id/test`), `GET /api/notifications/logs`
-- Admin only: `GET/POST /api/admin/users`, `PATCH/DELETE /api/admin/users/:id`, `GET /api/admin/stats`
+### Configuration
 
-## Configuration (env)
+| Variable | Default | Used by |
+|---|---|---|
+| `DATABASE_URL` | `postgres://webstats:webstats@localhost:5432/webstats` | all |
+| `JWT_SECRET` | dev fallback (**set in prod!**) | dashboard |
+| `PORT` / `BIND` | `8086`/`8085`, bind empty | APIs |
+| `GEO_CSV`, `GEO_ASN_CSV` | unset (GeoIP off) | ingest |
+| `REDIS_URL` | unset (direct writes) | ingest/worker |
+| `IP_HASH_SALT` | dev fallback | ingest |
+| `ALLOW_ORIGINS` | `*` | dashboard |
+| `APP_PUBLIC_URL` | `http://localhost:3000` | dashboard (links inside emails) |
+| `API_PUBLIC_URL` | `http://localhost:8086` | dashboard (unsubscribe links) |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8086` | frontend (build time) |
+| `NEXT_PUBLIC_TRACKER_URL` | same origin | frontend (install snippet) |
 
-`DATABASE_URL`, `JWT_SECRET`, `REDIS_URL`, `GEO_CSV` (GeoLite2-Country CSV,
-optional; a sample is at `backend/data/sample-geo.csv`), `IP_HASH_SALT`,
-`PORT`, `FLUSH_EVERY`, `BATCH_SIZE`, `ALLOW_ORIGINS`.
-Frontend: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_TRACKER_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`.
+## Releases & updates
 
-## Privacy
+The backend serves its version at `GET /api/version`. The sidebar shows it,
+and once every few hours compares it against the latest GitHub release — if a
+newer version exists you get an "Update available" notice with a link.
 
-IPs are hashed (SHA-256 + salt), never stored raw. Geo lookup only runs if a
-CSV file is provided (`GEO_CSV`). Users can opt out with
-`localStorage.setItem('_wst_optout','1')`.
+Releasing a new version:
 
-## Regenerate track.min.js
+1. Bump `Version` in `backend/internal/version/version.go`
+2. Tag & publish: `git tag vX.Y.Z && git push origin vX.Y.Z`, then create the
+   GitHub release for that tag
 
-```bash
-make tracker   # uses terser, required after editing tracker/track.js
-```
+## Development notes
 
-## Deploy on your own domain
-
-Ready-made production setup (Caddy reverse proxy with automatic SSL,
-systemd services, environment template) lives in `deploy/`:
-
-```bash
-cp deploy/webstats.env.example /etc/webstats.env   # fill in secrets + domain
-cp deploy/*.service /etc/systemd/system/ && systemctl daemon-reload
-systemctl enable --now webstats-dashboard webstats-ingest webstats-frontend
-cp deploy/Caddyfile /etc/caddy/Caddyfile && systemctl reload caddy
-```
-
-Full step-by-step guide (DNS, database, SSL, updates): `deploy/README.md`.
+- `make tracker` regenerates the minified script after editing `tracker/track.js`
+- `make build` builds all three Go binaries; CI runs build/vet/test + frontend typecheck/build
+- Migrations are idempotent and run in order from `db/migrations/`
 
 ---
 
-Created by [WildanDev](https://wildandev.tech)
+Created by [WildanDev](https://wildandev.tech) · licensed open source.
