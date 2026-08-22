@@ -16,6 +16,7 @@ import (
 	"github.com/webstats/backend/internal/auth"
 	"github.com/webstats/backend/internal/config"
 	"github.com/webstats/backend/internal/db"
+	"github.com/webstats/backend/internal/version"
 )
 
 func main() {
@@ -46,6 +47,12 @@ func main() {
 	app.Use(cors.New(cors.Config{AllowOrigins: cfg.AllowOrigins}))
 
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"ok": true}) })
+
+	// Public so the frontend can show the installed version and check for
+	// updates even before signing in.
+	app.Get("/api/version", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"version": version.Version})
+	})
 
 	// Brute-force protection for credential endpoints: 10 attempts per
 	// minute per IP (in-memory limiter, no external dependency).
@@ -173,7 +180,7 @@ func main() {
 	go retentionLoop(ctx, pool)
 	go reportLoop(ctx, pool, cfg)
 
-	log.Printf("dashboard API listening on :%s", cfg.Port)
+	log.Printf("dashboard %s listening on :%s", version.Version, cfg.Port)
 	log.Fatal(app.Listen(cfg.Bind + ":" + cfg.Port))
 }
 

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import Logo from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import UpdateNotice, { useInstalledVersion } from "@/components/UpdateNotice";
 import {
   IconGrid,
   IconChart,
@@ -60,6 +61,7 @@ export default function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const installedVersion = useInstalledVersion();
 
   const nav = [
     { href: "/", label: "Dashboard", icon: IconChart, match: (p: string) => p === "/" },
@@ -99,6 +101,9 @@ export default function AppShell({
             );
           })}
         </nav>
+        <div className="px-5 pb-2">
+          <UpdateNotice installed={installedVersion} />
+        </div>
         <div className="px-5 py-3">
           <p className="text-[11px] text-faint">
             Created by{" "}
@@ -110,6 +115,9 @@ export default function AppShell({
             >
               WildanDev
             </a>
+            {installedVersion && (
+              <span className="ml-1.5 text-faint/70">· v{installedVersion}</span>
+            )}
           </p>
         </div>
         <UserMenu name={name} email={email} role={role} />

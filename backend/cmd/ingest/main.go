@@ -15,6 +15,7 @@ import (
 	"github.com/webstats/backend/internal/geo"
 	"github.com/webstats/backend/internal/ingest"
 	"github.com/webstats/backend/internal/static"
+	"github.com/webstats/backend/internal/version"
 )
 
 func main() {
@@ -59,7 +60,9 @@ func main() {
 	app.Post("/api/collect", buf.CollectHandler)
 	app.Post("/api/event", buf.CollectHandler)
 
-	app.Get("/healthz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"ok": true}) })
+	app.Get("/healthz", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"ok": true, "version": version.Version})
+	})
 
 	// On SIGINT/SIGTERM: stop accepting connections, then give the flusher a
 	// chance to drain the queue so buffered events are not lost.
@@ -71,7 +74,7 @@ func main() {
 		_ = app.ShutdownWithContext(shutdownCtx)
 	}()
 
-	log.Printf("ingestion API listening on :%s", cfg.Port)
+	log.Printf("ingestion API %s listening on :%s", version.Version, cfg.Port)
 	if err := app.Listen(cfg.Bind+":"+cfg.Port); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
