@@ -42,6 +42,19 @@ func (m *Manager) UseSessionCheck(f func(ctx context.Context, tokenHash string) 
 	m.sessionCheck = f
 }
 
+// ValidateTokenCtx parses a raw bearer token and applies issuer + session
+// checks. Used by endpoints that cannot rely on headers (e.g. EventSource).
+func (m *Manager) ValidateTokenCtx(ctx context.Context, token string) (*Claims, bool) {
+	claims, err := m.Parse(token)
+	if err != nil || !strings.EqualFold(claims.Issuer, "webstats") {
+		return nil, false
+	}
+	if m.sessionCheck != nil && !m.sessionCheck(ctx, m.HashToken(token)) {
+		return nil, false
+	}
+	return claims, true
+}
+
 func (m *Manager) HashPassword(pw string) (string, error) {
 	b, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 	return string(b), err
