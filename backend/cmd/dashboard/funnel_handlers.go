@@ -65,9 +65,6 @@ func listFunnelsHandler(db *pgxpool.Pool) fiber.Handler {
 		if out == nil {
 			out = []model.FunnelStep{}
 		}
-		if out == nil {
-			out = []model.FunnelStep{}
-		}
 		return c.JSON(out)
 	}
 }
@@ -90,14 +87,22 @@ func replaceFunnelHandler(db *pgxpool.Pool) fiber.Handler {
 		for i := range in.Paths {
 			in.Paths[i] = strings.TrimSpace(in.Paths[i])
 		}
-		if _, err := db.Exec(c.Context(), `DELETE FROM funnel_steps WHERE site_id = $1`, siteID); err != nil {
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return errJSON(c, 500, "transaction failed")
+		}
+		defer tx.Rollback(c.Context())
+		if _, err := tx.Exec(c.Context(), `DELETE FROM funnel_steps WHERE site_id = $1`, siteID); err != nil {
 			return errJSON(c, 500, "delete failed")
 		}
 		for i, p := range in.Paths {
-			if _, err := db.Exec(c.Context(), `
+			if _, err := tx.Exec(c.Context(), `
 				INSERT INTO funnel_steps (site_id, position, label) VALUES ($1, $2, $3)`, siteID, i, p); err != nil {
 				return errJSON(c, 500, "insert failed")
 			}
+		}
+		if err := tx.Commit(c.Context()); err != nil {
+			return errJSON(c, 500, "commit failed")
 		}
 		return c.JSON(fiber.Map{"ok": true})
 	}

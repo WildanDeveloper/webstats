@@ -3,9 +3,9 @@ package main
 import (
 	"crypto/rand"
 	"crypto/tls"
-	"encoding/csv"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"regexp"
 	"strings"
@@ -147,7 +147,7 @@ func listSitesHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
 			SELECT s.id, s.user_id, s.name, s.domain, s.site_key, s.color, s.created_at,
-			       COALESCE(sc.status, ''), COALESCE(sc.latency_ms, 0), COALESCE(sc.checked_at, TIMESTAMPTZ 'epoch')
+			       COALESCE(sc.status, ''), COALESCE(sc.latency_ms, 0), sc.checked_at
 			FROM sites s
 			LEFT JOIN LATERAL (
 				SELECT status, latency_ms, checked_at FROM site_checks
@@ -164,14 +164,14 @@ func listSitesHandler(db *pgxpool.Pool) fiber.Handler {
 			var s model.Site
 			var status string
 			var latency int64
-			var checked time.Time
+			var checked *time.Time
 			if err := rows.Scan(&s.ID, &s.UserID, &s.Name, &s.Domain, &s.SiteKey, &s.Color, &s.CreatedAt, &status, &latency, &checked); err != nil {
 				return errJSON(c, 500, "scan failed")
 			}
 			s.Status = status
 			s.LatencyMs = latency
-			if !checked.IsZero() && checked.After(time.Time{}) {
-				s.CheckedAt = checked
+			if checked != nil {
+				s.CheckedAt = *checked
 			}
 			sites = append(sites, s)
 		}
@@ -220,10 +220,10 @@ func getSiteHandler(db *pgxpool.Pool) fiber.Handler {
 		var s model.Site
 		var status string
 		var latency int64
-		var checked time.Time
+		var checked *time.Time
 		err := db.QueryRow(c.Context(), `
 			SELECT s.id, s.user_id, s.name, s.domain, s.site_key, s.color, s.created_at,
-			       COALESCE(sc.status, ''), COALESCE(sc.latency_ms, 0), COALESCE(sc.checked_at, TIMESTAMPTZ 'epoch')
+			       COALESCE(sc.status, ''), COALESCE(sc.latency_ms, 0), sc.checked_at
 			FROM sites s
 			LEFT JOIN LATERAL (
 				SELECT status, latency_ms, checked_at FROM site_checks
@@ -236,8 +236,8 @@ func getSiteHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		s.Status = status
 		s.LatencyMs = latency
-		if !checked.IsZero() && checked.After(time.Time{}) {
-			s.CheckedAt = checked
+		if checked != nil {
+			s.CheckedAt = *checked
 		}
 		return c.JSON(s)
 	}
@@ -245,24 +245,49 @@ func getSiteHandler(db *pgxpool.Pool) fiber.Handler {
 
 func updateSiteHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		var in struct {
-			Name   *string `json:"name"`
-			Domain *string `json:"domain"`
-			Color  *string `json:"color"`
-		}
-		if err := c.BodyParser(&in); err != nil {
+		var body map[string]any
+		if err := c.BodyParser(&body); err != nil {
 			return errJSON(c, 400, "bad json")
 		}
-		if in.Color != nil && !hexColor.MatchString(*in.Color) {
-			return errJSON(c, 400, "color must be a hex value like #ef4444")
+		// Presence-based PATCH: a field is only touched when the key is sent,
+		// so empty strings can genuinely clear domain/color.
+		sets := []string{}
+		args := []any{}
+		addStr := func(key, col string, allowEmpty bool) error {
+			v, ok := body[key]
+			if !ok {
+				return nil
+			}
+			s, _ := v.(string)
+			s = strings.TrimSpace(s)
+			if !allowEmpty && s == "" {
+				return errJSON(c, 400, key+" cannot be empty")
+			}
+			if key == "color" && s != "" && !hexColor.MatchString(s) {
+				return errJSON(c, 400, "color must be a hex value like #ef4444")
+			}
+			args = append(args, s)
+			sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
+			return nil
 		}
-		tag, err := db.Exec(c.Context(), `
-			UPDATE sites SET
-				name    = COALESCE(NULLIF($1, ''), name),
-				domain  = COALESCE(NULLIF($2, ''), domain),
-				color   = COALESCE(NULLIF($3, ''), color)
-			WHERE id = $4 AND user_id = $5`,
-			orEmpty(in.Name), orEmpty(in.Domain), orEmpty(in.Color), c.Params("id"), auth.UserID(c))
+		fields := []struct{ key, col string; allowEmpty bool }{
+			{"name", "name", false},
+			{"domain", "domain", true},
+			{"color", "color", true},
+		}
+		for _, f := range fields {
+			if err := addStr(f.key, f.col, f.allowEmpty); err != nil {
+				return err
+			}
+		}
+		if len(sets) == 0 {
+			return errJSON(c, 400, "nothing to update")
+		}
+		args = append(args, c.Params("id"), auth.UserID(c))
+		tag, err := db.Exec(c.Context(),
+			fmt.Sprintf(`UPDATE sites SET %s WHERE id = $%d AND user_id = $%d`,
+				strings.Join(sets, ", "), len(args)-1, len(args)),
+			args...)
 		if err != nil {
 			return errJSON(c, 500, "update failed")
 		}
@@ -477,26 +502,23 @@ func createUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 
 func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		var in struct {
-			Name     *string `json:"name"`
-			Email    *string `json:"email"`
-			Password *string `json:"password"`
-			Role     *string `json:"role"`
-		}
-		if err := c.BodyParser(&in); err != nil {
+		var body map[string]any
+		if err := c.BodyParser(&body); err != nil {
 			return errJSON(c, 400, "bad json")
 		}
 		id := c.Params("id")
 		uid := auth.UserID(c)
 
-		if in.Role != nil && !validRole(*in.Role) {
-			return errJSON(c, 400, "role must be admin or user")
+		if roleVal, ok := body["role"]; ok {
+			role, _ := roleVal.(string)
+			if !validRole(role) {
+				return errJSON(c, 400, "role must be admin or user")
+			}
+			if id == uid && role != "admin" {
+				return errJSON(c, 400, "you cannot demote your own account")
+			}
 		}
-		if id == uid && in.Role != nil && *in.Role != "admin" {
-			return errJSON(c, 400, "you cannot demote your own account")
-		}
-
-		if in.Role != nil && *in.Role == "user" {
+		if roleVal, ok := body["role"]; ok && roleVal == "user" {
 			var isAdmin bool
 			_ = db.QueryRow(c.Context(), `SELECT role = 'admin' FROM users WHERE id = $1`, id).Scan(&isAdmin)
 			if isAdmin {
@@ -507,21 +529,58 @@ func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 				}
 			}
 		}
-		if in.Email != nil {
-			in2 := strings.ToLower(strings.TrimSpace(*in.Email))
-			if !strings.Contains(in2, "@") {
-				return errJSON(c, 400, "invalid email")
-			}
-			in.Email = &in2
-		}
 
-		tag, err := db.Exec(c.Context(), `
-			UPDATE users SET
-				name  = COALESCE(NULLIF($1, ''), name),
-				email = COALESCE(NULLIF($2, ''), email),
-				role  = COALESCE(NULLIF($3, ''), role)
-			WHERE id = $4`,
-			orEmpty(in.Name), orEmpty(in.Email), orEmpty(in.Role), id)
+		sets := []string{}
+		args := []any{}
+		addStr := func(key, col string, allowEmpty bool) error {
+			v, ok := body[key]
+			if !ok {
+				return nil
+			}
+			s, _ := v.(string)
+			s = strings.TrimSpace(s)
+			if key == "email" {
+				s = strings.ToLower(s)
+				if !strings.Contains(s, "@") {
+					return errJSON(c, 400, "invalid email")
+				}
+			}
+			if !allowEmpty && s == "" {
+				return errJSON(c, 400, key+" cannot be empty")
+			}
+			args = append(args, s)
+			sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
+			return nil
+		}
+		fields := []struct{ key, col string; allowEmpty bool }{
+			{"name", "name", true},
+			{"email", "email", false},
+			{"role", "role", false},
+		}
+		for _, f := range fields {
+			if err := addStr(f.key, f.col, f.allowEmpty); err != nil {
+				return err
+			}
+		}
+		if pwVal, ok := body["password"]; ok {
+			pw, _ := pwVal.(string)
+			if len(pw) < 8 {
+				return errJSON(c, 400, "password must be at least 8 characters")
+			}
+			hash, err := m.HashPassword(pw)
+			if err != nil {
+				return errJSON(c, 500, "hashing failed")
+			}
+			args = append(args, hash)
+			sets = append(sets, fmt.Sprintf("password_hash = $%d", len(args)))
+		}
+		if len(sets) == 0 {
+			return errJSON(c, 400, "nothing to update")
+		}
+		args = append(args, id)
+		tag, err := db.Exec(c.Context(),
+			fmt.Sprintf(`UPDATE users SET %s WHERE id = $%d`, strings.Join(sets, ", "), len(args)),
+			args...)
 		if err != nil {
 			if strings.Contains(err.Error(), "23505") {
 				return errJSON(c, 409, "email already exists")
@@ -531,14 +590,9 @@ func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 		if tag.RowsAffected() == 0 {
 			return errJSON(c, 404, "user not found")
 		}
-		if in.Password != nil && len(*in.Password) >= 8 {
-			hash, err := m.HashPassword(*in.Password)
-			if err != nil {
-				return errJSON(c, 500, "hashing failed")
-			}
-			if _, err := db.Exec(c.Context(), `UPDATE users SET password_hash = $1 WHERE id = $2`, hash, id); err != nil {
-				return errJSON(c, 500, "password update failed")
-			}
+		// A password change revokes every existing session of that user.
+		if _, ok := body["password"]; ok {
+			_, _ = db.Exec(c.Context(), `DELETE FROM sessions WHERE user_id = $1`, id)
 		}
 		return c.JSON(fiber.Map{"ok": true})
 	}
@@ -650,7 +704,7 @@ func visitorDetailHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		needsEnrich := out.Lat == 0
 		if needsEnrich {
-			if r := enrichVisitorIP(c.Context(), db, c.Params("ip")); r.Status == "success" {
+			if r := enrichVisitorIP(c.Context(), db, c.Params("ip"), c.Params("id")); r.Status == "success" {
 				if out.ISP == "unknown" && r.Isp != "" {
 					out.ISP = r.Isp
 				}
@@ -701,11 +755,3 @@ func exportHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
-func writeCSVSection(w *csv.Writer, title string, header []string, rows [][]string) {
-	w.Write([]string{title})
-	w.Write(header)
-	for _, r := range rows {
-		w.Write(r)
-	}
-	w.Write([]string{})
-}

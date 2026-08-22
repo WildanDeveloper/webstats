@@ -27,6 +27,18 @@ func main() {
 	defer pool.Close()
 
 	authMgr := auth.NewManager(cfg.JWTSecret)
+	if cfg.JWTSecret == "webstats-dev-secret-change-me" {
+		log.Printf("WARNING: using the default JWT_SECRET — set JWT_SECRET before exposing this service")
+	}
+	// JWTs are only accepted while a matching, non-expired row exists in the
+	// sessions table. This makes logout and password changes revoke tokens.
+	authMgr.UseSessionCheck(func(ctx context.Context, tokenHash string) bool {
+		var ok bool
+		err := pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM sessions WHERE token_hash = $1 AND expires_at > now())`,
+			tokenHash).Scan(&ok)
+		return err == nil && ok
+	})
 
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{AllowOrigins: cfg.AllowOrigins}))
@@ -109,7 +121,7 @@ func main() {
 	stats.Get("/monitors/:mid/checks", monitorChecksHandler(pool))
 
 	account := authed.Group("/account")
-	account.Post("/password", changePasswordHandler(pool))
+	account.Post("/password", changePasswordHandler(pool, authMgr))
 	account.Get("/api-keys", listApiKeysHandler(pool))
 	account.Post("/api-keys", createApiKeyHandler(pool))
 	account.Delete("/api-keys/:kid", deleteApiKeyHandler(pool))
@@ -145,6 +157,7 @@ func main() {
 	go monitorLoop(ctx, pool)
 	go anomalyLoop(ctx, pool)
 	go retentionLoop(ctx, pool)
+	go reportLoop(ctx, pool)
 
 	log.Printf("dashboard API listening on :%s", cfg.Port)
 	log.Fatal(app.Listen(cfg.Bind + ":" + cfg.Port))

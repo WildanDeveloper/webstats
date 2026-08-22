@@ -114,10 +114,10 @@ func checkSpikes(ctx context.Context, pool *pgxpool.Pool) {
 		var cur, avg int64
 		_ = pool.QueryRow(ctx, `
 			SELECT
-				(SELECT count(*) FROM pageviews WHERE site_id = $1 AND created_at > now() - interval '1 hour'),
+				(SELECT count(*) FROM pageviews WHERE site_id = $1 AND visited_at > now() - interval '1 hour'),
 				(SELECT count(*) / 168.0 FROM pageviews
-				 WHERE site_id = $1 AND created_at > now() - interval '7 days'
-				   AND created_at <= now() - interval '1 hour')`, siteID).Scan(&cur, &avg)
+				 WHERE site_id = $1 AND visited_at > now() - interval '7 days'
+				   AND visited_at <= now() - interval '1 hour')`, siteID).Scan(&cur, &avg)
 		if avg >= 1 && cur >= avg*int64(threshold) {
 			payload := notify.AlertPayload{
 				Event: "traffic_spike", SiteID: siteID, SiteName: siteName, Domain: domain,

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,10 +46,12 @@ func isProxyProvider(org string) (bool, string) {
 }
 
 // enrichVisitorIP resolves city/region/coords/ISP for an IP via ip-api.com
-// and caches the result back into the pageviews rows for that IP.
-func enrichVisitorIP(ctx context.Context, db *pgxpool.Pool, ip string) ipapiResult {
+// and caches the result back into the pageviews rows for that visitor.
+func enrichVisitorIP(ctx context.Context, db *pgxpool.Pool, ip, siteID string) ipapiResult {
 	var r ipapiResult
-	if ip == "" {
+	// Only real IPs can be enriched. With IP hashing enabled the identifier
+	// is a salted hash and must never be sent to a third party.
+	if net.ParseIP(ip) == nil {
 		return r
 	}
 	u := "http://ip-api.com/json/" + url.PathEscape(ip) +
@@ -68,7 +71,7 @@ func enrichVisitorIP(ctx context.Context, db *pgxpool.Pool, ip string) ipapiResu
 		SET isp = CASE WHEN isp = '' THEN $2 ELSE isp END,
 		    country = $7,
 		    region = $3, city = $4, lat = $5, lon = $6
-		WHERE ip = $1`, ip, r.Isp, r.RegionName, r.City, r.Lat, r.Lon, r.CountryCode)
+		WHERE ip = $1 AND site_id = $8`, ip, r.Isp, r.RegionName, r.City, r.Lat, r.Lon, r.CountryCode, siteID)
 	if err != nil {
 		return r
 	}

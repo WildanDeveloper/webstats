@@ -95,21 +95,24 @@ func updateMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 		if err := c.BodyParser(&in); err != nil {
 			return errJSON(c, 400, "bad json")
 		}
-		cur := model.Monitor{}
+		curInterval, curStatus := 0, 0
+		curEnabled := false
 		if err := db.QueryRow(c.Context(), `
-			SELECT interval_seconds, expected_status FROM monitors WHERE id = $1 AND site_id = $2`,
-			c.Params("mid"), siteID).Scan(&cur.IntervalSeconds, &cur.ExpectedStatus); err != nil {
+			SELECT interval_seconds, expected_status, enabled FROM monitors WHERE id = $1 AND site_id = $2`,
+			c.Params("mid"), siteID).Scan(&curInterval, &curStatus, &curEnabled); err != nil {
 			return errJSON(c, 404, "monitor not found")
 		}
-		interval := cur.IntervalSeconds
+		interval := curInterval
 		if in.IntervalSeconds != nil && *in.IntervalSeconds >= 30 {
 			interval = *in.IntervalSeconds
 		}
-		status := cur.ExpectedStatus
+		status := curStatus
 		if in.ExpectedStatus != nil && *in.ExpectedStatus > 0 {
 			status = *in.ExpectedStatus
 		}
-		enabled := true
+		// Preserve the current value unless the request explicitly changes it,
+		// otherwise a PATCH without "enabled" would silently re-enable a paused monitor.
+		enabled := curEnabled
 		if in.Enabled != nil {
 			enabled = *in.Enabled
 		}
@@ -227,9 +230,3 @@ func runMonitors(ctx context.Context, db *pgxpool.Pool, client *http.Client) {
 	}
 }
 
-func authUserID2(c *fiber.Ctx) string {
-	if v, ok := c.Locals("uid").(string); ok {
-		return v
-	}
-	return ""
-}

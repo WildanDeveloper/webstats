@@ -148,6 +148,6 @@ func runAnomalyCheck(ctx context.Context, db *pgxpool.Pool) {
 		db.Exec(ctx, `
 			INSERT INTO notif_logs (user_id, site_id, event, channel, status, detail)
 			VALUES ($1, $2, 'anomaly', 'inapp', 'new', $3)`,
-			s.User, s.ID, fmt.Sprintf("Traffic %s %.0f%% in the last 3 hours compared to the same window a week ago", dir, math.Abs(pct)))
+			s.User, s.ID, fmt.Sprintf("Traffic %s %.0f%% in the last 3 hours compared to the same window yesterday", dir, math.Abs(pct)))
 	}
 }

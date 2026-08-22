@@ -334,8 +334,8 @@ func reportLoop(ctx context.Context, pool *pgxpool.Pool) {
 			  AND (r.last_sent_at IS NULL OR r.last_sent_at < date_trunc('day', now()))
 			  AND (
 			    r.frequency = 'daily'
-			    OR (r.frequency = 'weekly' AND lower(r.day) = lower(to_char(now(), 'Day')::text))
-			    OR (r.frequency = 'monthly' AND r.day = to_char(now(), 'DD'))
+			    OR (r.frequency = 'weekly' AND lower(r.day) = lower(to_char(now(), 'FMDay')))
+			    OR (r.frequency = 'monthly' AND lpad(r.day, 2, '0') = to_char(now(), 'DD'))
 			  )`, now.Hour())
 		if err != nil {
 			return
@@ -356,11 +356,6 @@ func reportLoop(ctx context.Context, pool *pgxpool.Pool) {
 		}
 		rows.Close()
 		for _, r := range due {
-			period := "30d"
-			if rows2, err := pool.Query(ctx, `SELECT 1 FROM notif_reports WHERE id = $1`, r.id); err == nil {
-				rows2.Close()
-			}
-			_ = period
 			body, err := buildReport(ctx, pool, r.siteID, "30d", r.name, r.domain, r.kind, r.cfg, r.fromEmail, r.recipient)
 			if err != nil {
 				logReport(ctx, pool, r.userID, r.siteID, "report", "email", "fail", "build: "+err.Error())

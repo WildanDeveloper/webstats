@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/webstats/backend/internal/auth"
 	"github.com/webstats/backend/internal/model"
@@ -224,26 +226,45 @@ func acceptInviteHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 			return errJSON(c, 500, "hashing failed")
 		}
 		var userID string
+		var existed bool
 		err = db.QueryRow(c.Context(), `
 			INSERT INTO users (email, password_hash, name)
 			VALUES ($1, $2, $3)
-			ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
+			ON CONFLICT (email) DO NOTHING
 			RETURNING id::text`, inv.Email, hash, inv.Email).Scan(&userID)
-		if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The email is already registered. Never touch the existing
+			// account: accepting an invite must not be able to reset
+			// someone's password. Just attach the membership.
+			err = db.QueryRow(c.Context(), `SELECT id::text FROM users WHERE email = $1`, inv.Email).Scan(&userID)
+			if err != nil {
+				return errJSON(c, 500, "user lookup failed")
+			}
+			existed = true
+		} else if err != nil {
 			return errJSON(c, 500, "user create failed")
 		}
-		_, err = db.Exec(c.Context(), `
+		if _, err := db.Exec(c.Context(), `
 			INSERT INTO site_members (site_id, user_id, role) VALUES ($1, $2, $3)
 			ON CONFLICT (site_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
-			inv.SiteID, userID, inv.Role)
-		if err != nil {
+			inv.SiteID, userID, inv.Role); err != nil {
 			return errJSON(c, 500, "member add failed")
 		}
 		_, _ = db.Exec(c.Context(), `DELETE FROM invites WHERE token = $1`, c.Params("token"))
+		if existed {
+			// Existing account: let the person sign in with their own
+			// credentials instead of issuing a session here.
+			return c.JSON(fiber.Map{"ok": true, "exists": true, "email": inv.Email})
+		}
 		token, err := m.Issue(userID, inv.Email, "user")
 		if err != nil {
 			return errJSON(c, 500, "token issue failed")
 		}
+		// Register the session so the server-side validator accepts the token.
+		_, _ = db.Exec(c.Context(), `
+			INSERT INTO sessions (user_id, token_hash, user_agent, ip, expires_at)
+			VALUES ($1,$2,$3,$4, now() + ($5 || ' seconds')::interval)`,
+			userID, m.HashToken(token), c.Get("User-Agent"), c.IP(), int64(m.SessionTTL().Seconds()))
 		return c.JSON(fiber.Map{"token": token, "email": inv.Email})
 	}
 }
@@ -309,6 +330,15 @@ func updateSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 					return errJSON(c, 500, "query failed")
 				}
 			}
+			// Never publish a dashboard behind an empty token — mint one.
+			*tok = strings.TrimSpace(*tok)
+			if *tok == "" && (in.PublicEnabled == nil || *in.PublicEnabled) {
+				t, err := randHex(16)
+				if err != nil {
+					return errJSON(c, 500, "token generation failed")
+				}
+				*tok = t
+			}
 			enabled := in.PublicEnabled
 			if enabled == nil {
 				enabled = new(bool)
@@ -350,6 +380,13 @@ func retentionLoop(ctx context.Context, pool *pgxpool.Pool) {
 			cut := time.Now().UTC().AddDate(0, 0, -x.days)
 			pool.Exec(ctx, `DELETE FROM pageviews WHERE site_id = $1 AND visited_at < $2`, x.siteID, cut)
 			pool.Exec(ctx, `DELETE FROM events WHERE site_id = $1 AND created_at < $2`, x.siteID, cut)
+			// Derived/operational tables must follow, otherwise aggregates and
+			// check history outlive the retention window.
+			pool.Exec(ctx, `DELETE FROM site_daily WHERE site_id = $1 AND day < $2::date`, x.siteID, cut)
+			pool.Exec(ctx, `DELETE FROM site_checks WHERE site_id = $1 AND checked_at < $2`, x.siteID, cut)
+			pool.Exec(ctx, `DELETE FROM monitor_checks
+				WHERE monitor_id IN (SELECT id FROM monitors WHERE site_id = $1) AND checked_at < $2`,
+				x.siteID, cut)
 		}
 	}
 	run()

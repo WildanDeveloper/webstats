@@ -135,7 +135,9 @@ func publicFunnelHandler(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
-		return c.JSON(out)
+		// Same shape as the authenticated /funnel/data endpoint so the
+		// frontend can parse both identically.
+		return c.JSON(fiber.Map{"steps": paths, "report": out})
 	}
 }
 

@@ -1,19 +1,22 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/webstats/backend/internal/auth"
 	"github.com/webstats/backend/internal/model"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func changePasswordHandler(db *pgxpool.Pool) fiber.Handler {
+func changePasswordHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var in struct {
 			Current string `json:"current"`
@@ -41,6 +44,11 @@ func changePasswordHandler(db *pgxpool.Pool) fiber.Handler {
 			UPDATE users SET password_hash = $1 WHERE id = $2`, string(newHash), auth.UserID(c)); err != nil {
 			return errJSON(c, 500, "update failed")
 		}
+		// Revoke every other session; the current device stays signed in.
+		current := m.HashToken(auth.BearerToken(c.Get("Authorization")))
+		_, _ = db.Exec(c.Context(),
+			`DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2`,
+			auth.UserID(c), current)
 		return c.JSON(fiber.Map{"ok": true})
 	}
 }
@@ -74,9 +82,6 @@ func listApiKeysHandler(db *pgxpool.Pool) fiber.Handler {
 				return errJSON(c, 500, "scan failed")
 			}
 			out = append(out, k)
-		}
-		if out == nil {
-			out = []model.ApiKey{}
 		}
 		if out == nil {
 			out = []model.ApiKey{}
@@ -131,7 +136,7 @@ func apiKeyFallback(db *pgxpool.Pool) fiber.Handler {
 		if h == "" {
 			return c.Next()
 		}
-		tok := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+		tok := strings.TrimSpace(auth.BearerToken(h))
 		if !strings.HasPrefix(tok, "wsk_") {
 			return c.Next()
 		}
@@ -143,10 +148,23 @@ func apiKeyFallback(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid api key"})
 		}
-		db.Exec(c.Context(), `UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1`, hashKey(tok))
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = db.Exec(ctx, `UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1`, hashKey(tok))
+		}()
 		c.Locals("uid", uid)
 		c.Locals("email", email)
 		c.Locals("role", role)
+		c.Locals("claims", &auth.Claims{
+			UserID: uid,
+			Email:  email,
+			Role:   role,
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    "webstats",
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			},
+		})
 		return c.Next()
 	}
 }

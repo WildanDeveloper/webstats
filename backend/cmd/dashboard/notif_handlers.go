@@ -361,7 +361,12 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 		id := c.Params("id")
 		uid := auth.UserID(c)
 		var channel string
-		err := db.QueryRow(c.Context(), `SELECT channel FROM notif_rules WHERE id = $1 AND user_id = $2`, id, uid).Scan(&channel)
+		var curProvider *string
+		var curParams map[string]any
+		err := db.QueryRow(c.Context(), `
+			SELECT channel, provider_id::text, params
+			FROM notif_rules WHERE id = $1 AND user_id = $2`, id, uid).
+			Scan(&channel, &curProvider, &curParams)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "rule not found")
 		}
@@ -374,16 +379,26 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 				return errJSON(c, 400, "channel must be email or webhook")
 			}
 		}
-		if in.ProviderID != nil && *in.ProviderID != "" {
-			var ok bool
-			_ = db.QueryRow(c.Context(), `
-				SELECT EXISTS(SELECT 1 FROM notif_providers WHERE id = $1 AND user_id = $2)`,
-				*in.ProviderID, uid).Scan(&ok)
-			if !ok {
-				return errJSON(c, 404, "provider not found")
+		provider := curProvider
+		if in.ProviderID != nil {
+			p := strings.TrimSpace(*in.ProviderID)
+			if p != "" {
+				var ok bool
+				_ = db.QueryRow(c.Context(), `
+					SELECT EXISTS(SELECT 1 FROM notif_providers WHERE id = $1 AND user_id = $2)`,
+					p, uid).Scan(&ok)
+				if !ok {
+					return errJSON(c, 404, "provider not found")
+				}
+			} else {
+				p = ""
 			}
+			provider = &p
 		}
-		params := map[string]any{}
+		params := curParams
+		if params == nil {
+			params = map[string]any{}
+		}
 		if in.Params != nil {
 			params = in.Params
 		}
@@ -397,16 +412,19 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 				return errJSON(c, 400, "webhook URL must start with http(s)://")
 			}
 		}
+		if in.Event != nil && *in.Event != "site_down" && *in.Event != "site_up" && *in.Event != "traffic_spike" {
+			return errJSON(c, 400, "event must be site_down, site_up or traffic_spike")
+		}
 		tag, err := db.Exec(c.Context(), `
 			UPDATE notif_rules SET
 				event = COALESCE(NULLIF($1, ''), event),
 				channel = $2,
-				provider_id = NULLIF($3, '')::uuid,
+				provider_id = $3::uuid,
 				target = COALESCE(NULLIF($4, ''), target),
 				params = $5,
 				enabled = COALESCE($6, enabled)
 			WHERE id = $7 AND user_id = $8`,
-			orEmpty(in.Event), channel, orEmpty(in.ProviderID), target, params, in.Enabled, id, uid)
+			orEmpty(in.Event), channel, orEmpty(provider), target, params, in.Enabled, id, uid)
 		if err != nil {
 			return errJSON(c, 500, "update failed")
 		}
@@ -475,24 +493,29 @@ func deliverRule(ctx context.Context, db *pgxpool.Pool, uid, channel, target str
 			status, detail = "fail", err.Error()
 		}
 	} else {
-		var kind string
-		var cfg map[string]any
-		var fromEmail string
-		err := db.QueryRow(ctx, `
-			SELECT kind, config, from_email FROM notif_providers WHERE id = $1`, *providerID).
-			Scan(&kind, &cfg, &fromEmail)
-		if err != nil {
-			status, detail = "fail", "provider not found"
+		if providerID == nil || *providerID == "" {
+			status, detail = "fail", "email rule has no provider configured"
 		} else {
-			sender, err := notify.NewSender(kind, cfg, fromEmail)
+			var kind string
+			var cfg map[string]any
+			var fromEmail string
+			err := db.QueryRow(ctx, `
+				SELECT kind, config, from_email FROM notif_providers WHERE id = $1`, *providerID).
+				Scan(&kind, &cfg, &fromEmail)
 			if err != nil {
-				status, detail = "fail", err.Error()
-			} else if err := sender.Send(ctx, notify.Message{
-				From: fromEmail, To: target,
-				Subject: notify.EmailSubject(payload),
-				HTML:    notify.Email(payload),
-			}); err != nil {
-				status, detail = "fail", err.Error()
+				status, detail = "fail", "provider not found"
+			} else {
+				sender, err := notify.NewSender(kind, cfg, fromEmail)
+				if err != nil {
+					status, detail = "fail", err.Error()
+				} else if err := sender.Send(ctx, notify.Message{
+					From:    fromEmail,
+					To:      target,
+					Subject: notify.EmailSubject(payload),
+					HTML:    notify.Email(payload),
+				}); err != nil {
+					status, detail = "fail", err.Error()
+				}
 			}
 		}
 	}
