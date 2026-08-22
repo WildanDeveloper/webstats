@@ -311,8 +311,8 @@ func acceptInviteHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 		// Register the session so the server-side validator accepts the token.
 		_, _ = db.Exec(c.Context(), `
 			INSERT INTO sessions (user_id, token_hash, user_agent, ip, expires_at)
-			VALUES ($1,$2,$3,$4, now() + ($5 || ' seconds')::interval)`,
-			userID, m.HashToken(token), c.Get("User-Agent"), c.IP(), int64(m.SessionTTL().Seconds()))
+			VALUES ($1,$2,$3,$4, now() + make_interval(secs => $5::int))`,
+			userID, m.HashToken(token), c.Get("User-Agent"), c.IP(), int(m.SessionTTL().Seconds()))
 		return c.JSON(fiber.Map{"token": token, "email": inv.Email})
 	}
 }

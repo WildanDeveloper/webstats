@@ -104,8 +104,8 @@ func loginHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 		}
 		_, _ = db.Exec(c.Context(), `
 			INSERT INTO sessions (user_id, token_hash, user_agent, ip, expires_at)
-			VALUES ($1,$2,$3,$4, now() + ($5 || ' seconds')::interval)`,
-			u.ID, m.HashToken(token), c.Get("User-Agent"), c.IP(), int64(m.SessionTTL().Seconds()))
+			VALUES ($1,$2,$3,$4, now() + make_interval(secs => $5::int))`,
+			u.ID, m.HashToken(token), c.Get("User-Agent"), c.IP(), int(m.SessionTTL().Seconds()))
 		return c.JSON(fiber.Map{"token": token, "user": u})
 	}
 }
