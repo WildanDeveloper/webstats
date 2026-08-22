@@ -441,6 +441,8 @@ export default function SiteSettings({
         </div>
         <p className="mt-2.5 text-xs text-faint">
           Site key: <code className="text-indigo-500">{site.site_key}</code>
+          {!process.env.NEXT_PUBLIC_TRACKER_URL &&
+            " — the script above points at this dashboard's origin; set NEXT_PUBLIC_TRACKER_URL if your ingestion API runs on another host."}
         </p>
       </section>
 

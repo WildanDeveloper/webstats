@@ -6,6 +6,12 @@ export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:8086";
 
+// Base URL for client-side fetches (inlined at build time from
+// NEXT_PUBLIC_API_URL). Falls back to localhost:8086 for local dev so the
+// client never builds requests against "undefined".
+export const CLIENT_API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8086";
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({

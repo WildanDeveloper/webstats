@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { apiFetch } from "@/lib/auth";
+import { apiFetch, CLIENT_API_URL } from "@/lib/auth";
 import type {
   Campaign,
   EventDetail,
@@ -135,7 +135,7 @@ export default function StatsView(props: {
 
   async function pubGet<T>(path: string, qs = "") {
     if (isPublic) {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${basePath}${path}${qs}`, {
+      const res = await fetch(`${CLIENT_API_URL}${basePath}${path}${qs}`, {
         cache: "no-store",
       });
       if (!res.ok) throw new Error("request failed");
@@ -237,7 +237,7 @@ export default function StatsView(props: {
     for (const [k, v] of Object.entries(filters)) {
       if (v) qs.set(k, v);
     }
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/sites/${siteId}/export?${qs.toString()}`, {
+    fetch(`${CLIENT_API_URL}/api/sites/${siteId}/export?${qs.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {

@@ -232,6 +232,12 @@ export default function SiteList({
                 <p className="mt-3 flex items-center gap-1.5 text-xs text-faint">
                   <IconCode className="h-3.5 w-3.5" />
                   Site key: <code className="text-indigo-500">{site.site_key}</code>
+                  {!process.env.NEXT_PUBLIC_TRACKER_URL && (
+                    <span className="ml-2">
+                      (defaults to this dashboard&apos;s origin — set{" "}
+                      <code className="text-indigo-500">NEXT_PUBLIC_TRACKER_URL</code> if ingestion runs elsewhere)
+                    </span>
+                  )}
                 </p>
               </div>
             ))}

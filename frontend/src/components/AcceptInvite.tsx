@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
+import { CLIENT_API_URL } from "@/lib/auth";
 import { IconShieldCheck } from "@/components/icons";
 
 export default function AcceptInvite({
@@ -36,19 +37,26 @@ export default function AcceptInvite({
     setBusy(true);
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/invites/${token}`,
+        `${CLIENT_API_URL}/api/invites/${token}`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) },
       );
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || "Failed to accept invite");
       }
-      const r = await signIn("credentials", {
+      const r = await res.json();
+      if (r?.exists) {
+        // The email already had an account — its password was NOT changed.
+        setError("This email already has an account. Sign in to access the site.");
+        setTimeout(() => router.push("/login"), 1500);
+        return;
+      }
+      const s = await signIn("credentials", {
         email,
         password,
         redirect: false,
       });
-      if (r?.error) {
+      if (s?.error) {
         setError("Account created. Please sign in with your new password.");
         router.push("/login");
         return;

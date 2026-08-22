@@ -9,7 +9,7 @@ import { IconMail, IconLock } from "@/components/icons";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@webstats.dev");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -109,13 +109,6 @@ export default function LoginPage() {
           )}
         </button>
       </form>
-
-      <div className="mt-6 rounded-lg border border-edge bg-raised/60 px-3.5 py-3 text-xs leading-relaxed text-soft">
-        Default admin account:{" "}
-        <code className="font-mono text-indigo-500">admin@webstats.dev</code>{" "}
-        /{" "}
-        <code className="font-mono text-indigo-500">admin123</code>
-      </div>
 
       <p className="mt-6 text-center text-sm text-faint">
         Created by{" "}
