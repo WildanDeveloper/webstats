@@ -81,6 +81,12 @@ export type FunnelConfig = {
   label: string;
 };
 
+export type MonitorDay = {
+  date: string;
+  up: number;
+  total: number;
+};
+
 export type Monitor = {
   id: string;
   site_id: string;
@@ -92,6 +98,7 @@ export type Monitor = {
   last_ok: boolean | null;
   last_check_at: string | null;
   uptime_pct: number;
+  days?: MonitorDay[];
   created_at: string;
 };
 

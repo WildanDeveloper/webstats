@@ -18,6 +18,11 @@ type Config struct {
 	FlushEvery   time.Duration
 	BatchSize    int
 	AllowOrigins string
+	// PublicURL is the browser-facing base of the dashboard (frontend),
+	// used to build absolute links inside emails (invites, unsubscribe).
+	PublicURL string
+	// APIPublicURL is the browser-facing base of this API, used in emails.
+	APIPublicURL string
 }
 
 func getenv(key, def string) string {
@@ -41,6 +46,8 @@ func Load() *Config {
 		FlushEvery:   envDur("FLUSH_EVERY", 5*time.Second),
 		BatchSize:    envInt("BATCH_SIZE", 100),
 		AllowOrigins: getenv("ALLOW_ORIGINS", "*"),
+		PublicURL:    getenv("APP_PUBLIC_URL", "http://localhost:3000"),
+		APIPublicURL: getenv("API_PUBLIC_URL", "http://localhost:8086"),
 	}
 }
 

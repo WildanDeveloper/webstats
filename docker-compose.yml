@@ -25,6 +25,27 @@ services:
     volumes:
       - redisdata:/data
 
+  migrate:
+    image: postgres:16-alpine
+    container_name: webstats-migrate
+    profiles: ["full", "queue"]
+    volumes:
+      - ./db/migrations:/migrations:ro
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: webstats
+      PGPASSWORD: webstats
+      PGDATABASE: webstats
+    entrypoint: >
+      sh -c 'for f in /migrations/*.sql; do
+        echo "applying $$(basename $$f)";
+        psql -v ON_ERROR_STOP=1 -q -f "$$f" || exit 1;
+      done; echo "migrations done"'
+    depends_on:
+      db:
+        condition: service_healthy
+
   ingest:
     build: ./backend
     container_name: webstats-ingest
@@ -39,6 +60,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   dashboard:
     build: ./backend
@@ -49,11 +72,29 @@ services:
       PORT: "8086"
       DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
       JWT_SECRET: change-me-in-production
+      APP_PUBLIC_URL: http://localhost:3000
+      API_PUBLIC_URL: http://localhost:8086
     ports:
       - "8086:8086"
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build: ./frontend
+    container_name: webstats-web
+    profiles: ["full"]
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8086
+        NEXT_PUBLIC_TRACKER_URL: http://localhost:8085
+    ports:
+      - "3000:3000"
+    depends_on:
+      - dashboard
 
   worker:
     build: ./backend
@@ -68,6 +109,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

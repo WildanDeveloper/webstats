@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"html/template"
 	"strings"
 	"time"
 
@@ -10,7 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/webstats/backend/internal/auth"
+	"github.com/webstats/backend/internal/config"
 	"github.com/webstats/backend/internal/model"
+	"github.com/webstats/backend/internal/notify"
 )
 
 func isSiteOwner(ctx *fiber.Ctx, db *pgxpool.Pool, siteID, userID string) bool {
@@ -57,11 +60,12 @@ func membersHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
-func createInviteHandler(db *pgxpool.Pool) fiber.Handler {
+func createInviteHandler(db *pgxpool.Pool, cfg *config.Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var in struct {
-			Email string `json:"email"`
-			Role  string `json:"role"`
+			Email     string `json:"email"`
+			Role      string `json:"role"`
+			SendEmail bool   `json:"send_email"`
 		}
 		if err := c.BodyParser(&in); err != nil {
 			return errJSON(c, 400, "bad json")
@@ -105,8 +109,52 @@ func createInviteHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 500, "insert failed")
 		}
 		inv.InviteURL = "/invite/" + inv.Token
+		if in.SendEmail {
+			go sendInviteEmail(db, cfg, uid, in.Email, inv.Role, inv.Token)
+		}
 		return c.Status(201).JSON(inv)
 	}
+}
+
+// sendInviteEmail delivers an invite link through the site owner's first
+// configured email provider. Best-effort: failures land in the delivery log.
+func sendInviteEmail(db *pgxpool.Pool, cfg *config.Config, ownerID, email, role, token string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	var kind string
+	var providerCfg map[string]any
+	var fromEmail string
+	err := db.QueryRow(ctx, `
+		SELECT kind, config, from_email FROM notif_providers
+		WHERE user_id = $1 ORDER BY created_at LIMIT 1`, ownerID).
+		Scan(&kind, &providerCfg, &fromEmail)
+	if err != nil {
+		logReport(ctx, db, ownerID, "", "invite", "email", "fail", "no email provider configured")
+		return
+	}
+	sender, err := notify.NewSender(kind, providerCfg, fromEmail)
+	if err != nil {
+		logReport(ctx, db, ownerID, "", "invite", "email", "fail", err.Error())
+		return
+	}
+	link := strings.TrimRight(cfg.PublicURL, "/") + "/invite/" + token
+	html := `<div style="max-width:520px;margin:24px auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<div style="background:#111827;color:#fff;padding:16px 24px;font-size:16px;font-weight:700">You're invited to WebStats</div>
+<div style="padding:20px 24px">
+<p style="color:#374151;font-size:14px;margin:0 0 8px">You have been invited as <b>` + template.HTMLEscapeString(role) + `</b>.</p>
+<p style="color:#6b7280;font-size:13px;margin:0 0 16px">Open the link below and choose a password for ` + template.HTMLEscapeString(email) + `:</p>
+<p style="margin:0"><a href="` + link + `" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:600">Accept invite</a></p>
+</div></div>`
+	sendErr := sender.Send(ctx, notify.Message{
+		From: fromEmail, To: email,
+		Subject: "[WebStats] You have been invited",
+		HTML:    html,
+	})
+	if sendErr != nil {
+		logReport(ctx, db, ownerID, "", "invite", "email", "fail", sendErr.Error())
+		return
+	}
+	logReport(ctx, db, ownerID, "", "invite", "email", "ok", "sent "+email)
 }
 
 func listInvitesHandler(db *pgxpool.Pool) fiber.Handler {

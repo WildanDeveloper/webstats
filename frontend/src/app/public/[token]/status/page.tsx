@@ -83,44 +83,91 @@ export default async function PublicStatusPage({
             </p>
           )}
           {status.monitors.map((m) => (
-            <div key={m.id} className="flex items-center gap-4 rounded-xl border border-edge bg-card p-4">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-raised">
-                {m.last_ok ? (
-                  <IconShieldCheck className="h-5 w-5 text-emerald-500" />
-                ) : (
-                  <IconShieldX className="h-5 w-5 text-red-500" />
-                )}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-ink">{m.url}</p>
-                <p className="text-xs text-faint">
-                  {m.last_ok
-                    ? m.last_status
-                      ? `HTTP ${m.last_status}`
-                      : "Up"
-                    : m.last_status
-                      ? `HTTP ${m.last_status}`
-                      : "Down"}
-                  {m.last_check_at
-                    ? ` · checked ${new Date(m.last_check_at).toLocaleString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}`
-                    : " · waiting for first check"}
-                </p>
+            <div key={m.id} className="rounded-xl border border-edge bg-card p-4">
+              <div className="flex items-center gap-4">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-raised">
+                  {m.last_ok ? (
+                    <IconShieldCheck className="h-5 w-5 text-emerald-500" />
+                  ) : (
+                    <IconShieldX className="h-5 w-5 text-red-500" />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-ink">{m.url}</p>
+                  <p className="text-xs text-faint">
+                    {m.last_ok
+                      ? m.last_status
+                        ? `HTTP ${m.last_status}`
+                        : "Up"
+                      : m.last_status
+                        ? `HTTP ${m.last_status}`
+                        : "Down"}
+                    {m.last_check_at
+                      ? ` · checked ${new Date(m.last_check_at).toLocaleString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}`
+                      : " · waiting for first check"}
+                  </p>
+                </div>
+                <span
+                  className={`text-sm font-semibold ${
+                    m.uptime_pct >= 99 ? "text-emerald-500" : m.uptime_pct >= 90 ? "text-amber-500" : "text-red-500"
+                  }`}
+                >
+                  {m.uptime_pct.toFixed(2)}%
+                </span>
               </div>
-              <span
-                className={`text-sm font-semibold ${
-                  m.uptime_pct >= 99 ? "text-emerald-500" : m.uptime_pct >= 90 ? "text-amber-500" : "text-red-500"
-                }`}
-              >
-                {m.uptime_pct.toFixed(2)}%
-              </span>
+              {m.days && m.days.length > 0 && <UptimeBars days={m.days} />}
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+
+function UptimeBars({ days }: { days: NonNullable<PublicStatus["monitors"][number]["days"]> }) {
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  const today = new Date();
+  const bars: React.ReactNode[] = [];
+  for (let i = 89; i >= 0; i--) {
+    const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+    const key = date.toISOString().slice(0, 10);
+    const d = byDate.get(key);
+    const total = d?.total ?? 0;
+    const up = d?.up ?? 0;
+    const cls =
+      total === 0
+        ? "bg-raised"
+        : up / total >= 1
+          ? "bg-emerald-500"
+          : up / total >= 0.9
+            ? "bg-amber-500"
+            : "bg-red-500";
+    bars.push(
+      <span
+        key={key}
+        title={
+          total > 0
+            ? `${key}: ${up}/${total} checks up`
+            : `${key}: no checks`
+        }
+        className={`h-6 flex-1 rounded-[2px] ${cls}`}
+        style={{ minWidth: 3 }}
+      />,
+    );
+  }
+  return (
+    <div className="mt-3">
+      <div className="flex gap-[2px]">{bars}</div>
+      <div className="mt-1.5 flex justify-between text-[10px] text-faint">
+        <span>90 days ago</span>
+        <span>today</span>
       </div>
     </div>
   );

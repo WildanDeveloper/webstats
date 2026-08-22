@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/webstats/backend/internal/analytics"
 	"github.com/webstats/backend/internal/auth"
+	"github.com/webstats/backend/internal/config"
 	"github.com/webstats/backend/internal/notify"
 )
 
@@ -280,20 +282,20 @@ func deleteReportHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
-func testReportHandler(db *pgxpool.Pool) fiber.Handler {
+func testReportHandler(db *pgxpool.Pool, cfg *config.Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		uid := auth.UserID(c)
-		var siteID, domain, siteName, recipient, kind string
-		var cfg map[string]any
+		var siteID, domain, siteName, recipient, kind, unsubToken string
+		var cfgMap map[string]any
 		var fromEmail string
 		err := db.QueryRow(c.Context(), `
-			SELECT r.site_id, s.domain, s.name, r.recipient, p.kind, p.config, p.from_email
+			SELECT r.site_id, s.domain, s.name, r.recipient, p.kind, p.config, p.from_email, r.unsub_token
 			FROM notif_reports r
 			JOIN sites s ON s.id = r.site_id
 			JOIN notif_providers p ON p.id = r.provider_id
 			WHERE r.id = $1 AND r.user_id = $2`, id, uid).
-			Scan(&siteID, &domain, &siteName, &recipient, &kind, &cfg, &fromEmail)
+			Scan(&siteID, &domain, &siteName, &recipient, &kind, &cfgMap, &fromEmail, &unsubToken)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "report not found")
 		}
@@ -301,7 +303,7 @@ func testReportHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 500, "query failed")
 		}
 		ctxT, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		body, err := buildReport(ctxT, db, siteID, "30d", siteName, domain, kind, cfg, fromEmail, recipient)
+		body, err := buildReport(ctxT, db, siteID, "30d", siteName, domain, kind, cfgMap, fromEmail, recipient, cfg.APIPublicURL+"/api/unsubscribe/"+unsubToken)
 		cancel()
 		if err != nil {
 			return errJSON(c, 502, "report build failed: "+err.Error())
@@ -321,12 +323,12 @@ func testReportHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
-func reportLoop(ctx context.Context, pool *pgxpool.Pool) {
+func reportLoop(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config) {
 	run := func() {
 		now := time.Now().UTC()
 		rows, err := pool.Query(ctx, `
 			SELECT r.id, r.user_id, r.site_id, s.name, s.domain, r.recipient,
-			       p.kind, p.config, p.from_email, r.frequency, r.day, r.hour
+			       p.kind, p.config, p.from_email, r.unsub_token
 			FROM notif_reports r
 			JOIN sites s ON s.id = r.site_id
 			JOIN notif_providers p ON p.id = r.provider_id
@@ -342,21 +344,22 @@ func reportLoop(ctx context.Context, pool *pgxpool.Pool) {
 		}
 		defer rows.Close()
 		type row struct {
-			id, userID, siteID, name, domain, recipient, kind string
-			cfg                                               map[string]any
-			fromEmail                                         string
+			id, userID, siteID, name, domain, recipient, kind, unsubToken string
+			cfg                                                           map[string]any
+			fromEmail                                                     string
 		}
 		var due []row
 		for rows.Next() {
 			var r row
 			if rows.Scan(&r.id, &r.userID, &r.siteID, &r.name, &r.domain, &r.recipient,
-				&r.kind, &r.cfg, &r.fromEmail, new(string), new(string), new(int)) == nil {
+				&r.kind, &r.cfg, &r.fromEmail, &r.unsubToken) == nil {
 				due = append(due, r)
 			}
 		}
 		rows.Close()
 		for _, r := range due {
-			body, err := buildReport(ctx, pool, r.siteID, "30d", r.name, r.domain, r.kind, r.cfg, r.fromEmail, r.recipient)
+			body, err := buildReport(ctx, pool, r.siteID, "30d", r.name, r.domain, r.kind, r.cfg, r.fromEmail, r.recipient,
+				strings.TrimRight(cfg.APIPublicURL, "/")+"/api/unsubscribe/"+r.unsubToken)
 			if err != nil {
 				logReport(ctx, pool, r.userID, r.siteID, "report", "email", "fail", "build: "+err.Error())
 				continue
@@ -382,14 +385,29 @@ func reportLoop(ctx context.Context, pool *pgxpool.Pool) {
 	}
 }
 
-func logReport(ctx context.Context, pool *pgxpool.Pool, userID, siteID, event, channel, status, detail string) {
-	_, _ = pool.Exec(ctx, `
+// unsubscribeHandler is a public one-click opt-out for scheduled reports.
+func unsubscribeHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		tag, err := db.Exec(c.Context(),
+			`UPDATE notif_reports SET enabled = false WHERE unsub_token = $1`, c.Params("token"))
+		ok := err == nil && tag.RowsAffected() > 0
+		msg := "You have been unsubscribed from these reports."
+		if !ok {
+			msg = "This unsubscribe link is invalid or already inactive."
+		}
+		c.Set("Content-Type", "text/html; charset=utf-8")
+		return c.SendString(`<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:420px;margin:80px auto;text-align:center;color:#374151">
+<h2 style="font-size:18px">WebStats</h2><p style="font-size:14px">` + msg + `</p></div>`)
+	}
+}
+
+func logReport(ctx context.Context, pool *pgxpool.Pool, userID, siteID, event, channel, status, detail string) {	_, _ = pool.Exec(ctx, `
 		INSERT INTO notif_logs (user_id, site_id, event, channel, status, detail)
 		VALUES ($1,$2,$3,$4,$5,$6)`, userID, siteID, event, channel, status, detail)
 }
 
 func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteName, domain, kind string,
-	cfg map[string]any, fromEmail, recipient string) (reportBody, error) {
+	cfgMap map[string]any, fromEmail, recipient, unsubURL string) (reportBody, error) {
 
 	var b reportBody
 	var out struct {
@@ -406,6 +424,11 @@ func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteNa
 	out.Pageviews = ov.Pageviews
 	out.Visitors = ov.Visitors
 	out.Sessions = ov.Sessions
+	unsubHTML := ""
+	if unsubURL != "" {
+		u := template.HTMLEscapeString(unsubURL)
+		unsubHTML = `<p style="margin:14px 0 0"><a href="` + u + `" style="color:#9ca3af;font-size:12px">Unsubscribe from these reports</a></p>`
+	}
 
 	var rows string
 	add := func(k, v string) {
@@ -433,12 +456,12 @@ func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteNa
 <h3 style="font-size:13px;color:#111827;margin:18px 0 6px">Top referrers</h3>
 <table style="width:100%;border-collapse:collapse">` + topRefs + `</table>
 </div>
-<div style="padding:12px 24px;color:#9ca3af;font-size:12px">Sent by WebStats</div>
+<div style="padding:12px 24px;color:#9ca3af;font-size:12px">Sent by WebStats` + unsubHTML + `</div>
 </div>`
 	b.From = fromEmail
 	b.To = recipient
 	b.Kind = kind
-	b.Cfg = cfg
+	b.Cfg = cfgMap
 	return b, nil
 }
 
