@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/webstats/backend/internal/ua"
 )
 
 func (b *Buffer) CollectHandler(c *fiber.Ctx) error {
@@ -27,6 +28,10 @@ func (b *Buffer) CollectHandler(c *fiber.Ctx) error {
 	rec := b.Normalize(raw, c.IP())
 	if rec.SessionID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing session_id"})
+	}
+	// Silently accept and drop crawler/bot traffic so it never reaches the DB.
+	if ua.IsBot(rec.UA) {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"ok": true})
 	}
 	b.Push(rec)
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"ok": true})

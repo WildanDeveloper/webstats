@@ -120,7 +120,7 @@
     send(payload);
   }
 
-  
+   
   var lastPath = '';
   function hook() {
     var orig = history.pushState;
@@ -136,10 +136,15 @@
       return r;
     };
     window.addEventListener('popstate', onRoute);
+    window.addEventListener('hashchange', onRoute);
+  }
+
+  function routeKey() {
+    return location.pathname + location.search + location.hash;
   }
 
   function onRoute() {
-    var p = location.pathname + location.search;
+    var p = routeKey();
     if (p === lastPath) return;
     lastPath = p;
     pageview();

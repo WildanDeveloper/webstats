@@ -7,6 +7,7 @@ type Info struct {
 	OS       string
 	Device   string
 	Original string
+	IsBot    bool
 }
 
 func Parse(raw string) Info {
@@ -28,5 +29,13 @@ func Parse(raw string) Info {
 	if os == "" {
 		os = "Unknown"
 	}
-	return Info{Browser: name, OS: os, Device: device, Original: raw}
+	return Info{Browser: name, OS: os, Device: device, Original: raw, IsBot: ua.Bot}
+}
+
+// IsBot reports whether the user agent looks like a crawler/bot.
+func IsBot(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	return useragent.Parse(raw).Bot
 }
