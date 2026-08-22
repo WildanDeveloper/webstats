@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,9 +21,10 @@ type Claims struct {
 }
 
 type Manager struct {
-	secret  []byte
-	ttl     time.Duration
-	sessTTL time.Duration
+	secret       []byte
+	ttl          time.Duration
+	sessTTL      time.Duration
+	sessionCheck func(ctx context.Context, tokenHash string) bool
 }
 
 func NewManager(secret string) *Manager {
@@ -31,6 +33,13 @@ func NewManager(secret string) *Manager {
 		ttl:     24 * time.Hour,
 		sessTTL: 30 * 24 * time.Hour,
 	}
+}
+
+// UseSessionCheck wires an optional server-side session validator. When set,
+// a JWT is only accepted if a matching non-expired session row exists, which
+// makes logout and password changes able to revoke tokens immediately.
+func (m *Manager) UseSessionCheck(f func(ctx context.Context, tokenHash string) bool) {
+	m.sessionCheck = f
 }
 
 func (m *Manager) HashPassword(pw string) (string, error) {

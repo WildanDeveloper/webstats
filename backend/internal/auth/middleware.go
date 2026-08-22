@@ -15,12 +15,16 @@ func (m *Manager) Middleware() fiber.Handler {
 		if h == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "missing token"})
 		}
-		claims, err := m.Parse(BearerToken(h))
+		tok := BearerToken(h)
+		claims, err := m.Parse(tok)
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid token"})
 		}
 		if !strings.EqualFold(claims.Issuer, "webstats") {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid token"})
+		}
+		if m.sessionCheck != nil && !m.sessionCheck(c.Context(), m.HashToken(tok)) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "session expired"})
 		}
 		c.Locals("uid", claims.UserID)
 		c.Locals("email", claims.Email)
