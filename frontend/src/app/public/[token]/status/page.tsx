@@ -144,7 +144,7 @@ function UptimeBars({ days }: { days: NonNullable<PublicStatus["monitors"][numbe
     const cls =
       total === 0
         ? "bg-raised"
-        : up / total >= 1
+        : up / total >= 0.98
           ? "bg-emerald-500"
           : up / total >= 0.9
             ? "bg-amber-500"
