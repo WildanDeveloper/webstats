@@ -136,17 +136,24 @@ type Funnel struct {
 }
 
 type Monitor struct {
-	ID              string     `json:"id"`
-	SiteID          string     `json:"site_id"`
-	URL             string     `json:"url"`
-	IntervalSeconds int        `json:"interval_seconds"`
-	ExpectedStatus  int        `json:"expected_status"`
-	Enabled         bool       `json:"enabled"`
-	LastStatus      *int       `json:"last_status"`
-	LastOK          *bool      `json:"last_ok"`
-	LastCheckAt     *time.Time `json:"last_check_at"`
-	UptimePct       float64    `json:"uptime_pct"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID              string       `json:"id"`
+	SiteID          string       `json:"site_id"`
+	URL             string       `json:"url"`
+	IntervalSeconds int          `json:"interval_seconds"`
+	ExpectedStatus  int          `json:"expected_status"`
+	Enabled         bool         `json:"enabled"`
+	LastStatus      *int         `json:"last_status"`
+	LastOK          *bool        `json:"last_ok"`
+	LastCheckAt     *time.Time   `json:"last_check_at"`
+	UptimePct       float64      `json:"uptime_pct"`
+	Days            []MonitorDay `json:"days,omitempty"`
+	CreatedAt       time.Time    `json:"created_at"`
+}
+
+type MonitorDay struct {
+	Date  string `json:"date"`
+	Up    int64  `json:"up"`
+	Total int64  `json:"total"`
 }
 
 type MonitorCheck struct {

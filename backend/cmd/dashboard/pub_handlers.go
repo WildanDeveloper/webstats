@@ -217,6 +217,7 @@ func publicStatusHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		defer rows.Close()
 		var out []model.Monitor
+		ids := []string{}
 		for rows.Next() {
 			var m model.Monitor
 			if err := rows.Scan(&m.ID, &m.URL, &m.IntervalSeconds, &m.ExpectedStatus, &m.Enabled,
@@ -224,10 +225,52 @@ func publicStatusHandler(db *pgxpool.Pool) fiber.Handler {
 				return errJSON(c, 500, "scan failed")
 			}
 			out = append(out, m)
+			ids = append(ids, m.ID)
 		}
 		if out == nil {
 			out = []model.Monitor{}
 		}
+		if len(ids) > 0 {
+			attachMonitorDays(c.Context(), db, out, ids)
+		}
 		return c.JSON(fiber.Map{"site": info, "monitors": out})
+	}
+}
+
+// attachMonitorDays buckets each monitor's checks per day for the last 90
+// days so the public status page can draw uptime bars.
+func attachMonitorDays(ctx context.Context, db *pgxpool.Pool, monitors []model.Monitor, ids []string) {
+	rows, err := db.Query(ctx, `
+		SELECT monitor_id, checked_at::date::text, count(*), count(*) FILTER (WHERE ok)
+		FROM monitor_checks
+		WHERE monitor_id = ANY($1::uuid[]) AND checked_at >= now() - interval '90 days'
+		GROUP BY 1, 2 ORDER BY 2`, ids)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	byID := map[string]map[string]model.MonitorDay{}
+	for rows.Next() {
+		var mid, date string
+		var total, up int64
+		if err := rows.Scan(&mid, &date, &total, &up); err != nil {
+			continue
+		}
+		if byID[mid] == nil {
+			byID[mid] = map[string]model.MonitorDay{}
+		}
+		byID[mid][date] = model.MonitorDay{Date: date, Up: up, Total: total}
+	}
+	rows.Close()
+	for i := range monitors {
+		days := byID[monitors[i].ID]
+		if len(days) == 0 {
+			continue
+		}
+		series := make([]model.MonitorDay, 0, len(days))
+		for _, d := range days {
+			series = append(series, d)
+		}
+		monitors[i].Days = series
 	}
 }
