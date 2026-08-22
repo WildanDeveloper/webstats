@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/webstats/backend/internal/auth"
 	"github.com/webstats/backend/internal/config"
@@ -45,9 +46,19 @@ func main() {
 
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"ok": true}) })
 
+	// Brute-force protection for credential endpoints: 10 attempts per
+	// minute per IP (in-memory limiter, no external dependency).
+	authLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: time.Minute,
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many attempts, slow down"})
+		},
+	})
+
 	api := app.Group("/api")
-	api.Post("/auth/register", registerHandler(pool, authMgr))
-	api.Post("/auth/login", loginHandler(pool, authMgr))
+	api.Post("/auth/register", authLimiter, registerHandler(pool, authMgr))
+	api.Post("/auth/login", authLimiter, loginHandler(pool, authMgr))
 	api.Post("/auth/logout", authMgr.Middleware(), logoutHandler(pool, authMgr))
 	api.Get("/invites/:token", inviteInfoHandler(pool))
 	api.Post("/invites/:token", acceptInviteHandler(pool, authMgr))
