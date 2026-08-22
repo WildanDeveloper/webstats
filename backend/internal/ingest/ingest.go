@@ -161,10 +161,6 @@ func (b *Buffer) flusher(ctx context.Context) {
 func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 	pvs := make([]analytics.PageviewRow, 0, len(recs))
 	evs := make([]analytics.EventRowIn, 0, 8)
-	minDay := time.Now()
-	maxDay := time.Time{}
-	sites := map[string]bool{}
-
 	for _, r := range recs {
 		if r.SiteID == "" {
 			continue
@@ -184,14 +180,6 @@ func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 				Country: r.Country, Screen: r.Screen, Lang: r.Lang,
 				IPHash: r.IPHash, ISP: r.ISP, IP: r.IP, VisitedAt: r.Ts, UTM: r.UTM,
 			})
-			sites[r.SiteID] = true
-			d := r.Ts.UTC().Truncate(24 * time.Hour)
-			if d.Before(minDay) {
-				minDay = d
-			}
-			if d.After(maxDay) {
-				maxDay = d
-			}
 		}
 	}
 
@@ -200,11 +188,6 @@ func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 	}
 	if err := analytics.InsertEvents(ctx, b.db, evs); err != nil {
 		return fmt.Errorf("insert events: %w", err)
-	}
-	for site := range sites {
-		if err := analytics.AggregateDaily(ctx, b.db, site, minDay, maxDay.Add(24*time.Hour)); err != nil {
-			return fmt.Errorf("aggregate: %w", err)
-		}
 	}
 	return nil
 }

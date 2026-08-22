@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/webstats/backend/internal/geo"
@@ -82,28 +83,62 @@ type EventRowIn struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
+// pageviewCols/columns order is shared by the COPY-based bulk inserts below.
+var pageviewCols = []string{
+	"site_id", "session_id", "path", "title", "referrer", "referrer_host",
+	"ua", "browser", "os", "device", "country", "isp", "screen", "lang",
+	"ip_hash", "ip", "visited_at",
+	"utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+}
+
+// EnsurePageviewPartitions makes sure monthly partitions exist for the
+// current and next month before bulk-inserting. A DEFAULT partition created
+// in migration 010 catches everything else, so inserts never fail. Results
+// are memoized per process per month.
+var (
+	pvPartMu     sync.Mutex
+	pvLastMonth  string
+)
+
+func EnsurePageviewPartitions(ctx context.Context, db *pgxpool.Pool) {
+	cur := time.Now().UTC().Truncate(24 * time.Hour)
+	cur = time.Date(cur.Year(), cur.Month(), 1, 0, 0, 0, 0, time.UTC)
+	key := cur.Format("200601")
+	pvPartMu.Lock()
+	if pvLastMonth == key {
+		pvPartMu.Unlock()
+		return
+	}
+	pvLastMonth = key
+	pvPartMu.Unlock()
+	for _, m := range []time.Time{cur, cur.AddDate(0, 1, 0)} {
+		name := pgx.Identifier{"pageviews_" + m.Format("2006_01")}.Sanitize()
+		start := m.Format("2006-01-02")
+		end := m.AddDate(0, 1, 0).Format("2006-01-02")
+		// Best-effort: concurrent creators may hit duplicate_table races.
+		_, _ = db.Exec(ctx, fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %s PARTITION OF pageviews FOR VALUES FROM ('%s') TO ('%s')`,
+			name, start, end))
+	}
+}
+
 func InsertPageviews(ctx context.Context, db *pgxpool.Pool, rows []PageviewRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	tx, err := db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
+	EnsurePageviewPartitions(ctx, db)
+	src := make([][]any, 0, len(rows))
 	for _, r := range rows {
-		if _, err := tx.Exec(ctx, `INSERT INTO pageviews
-				(site_id, session_id, path, title, referrer, referrer_host, ua, browser, os, device, country, isp, screen, lang, ip_hash, ip, visited_at,
-				 utm_source, utm_medium, utm_campaign, utm_content, utm_term)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+		src = append(src, []any{
 			r.SiteID, r.SessionID, r.Path, r.Title, r.Referrer, r.ReferrerHost,
-			r.UA, r.Browser, r.OS, r.Device, r.Country, r.ISP, r.Screen, r.Lang, r.IPHash, r.IP, r.VisitedAt,
+			r.UA, r.Browser, r.OS, r.Device, r.Country, r.ISP, r.Screen, r.Lang,
+			r.IPHash, r.IP, r.VisitedAt,
 			utm(r.UTM, "utm_source"), utm(r.UTM, "utm_medium"), utm(r.UTM, "utm_campaign"),
-			utm(r.UTM, "utm_content"), utm(r.UTM, "utm_term")); err != nil {
-			return err
-		}
+			utm(r.UTM, "utm_content"), utm(r.UTM, "utm_term"),
+		})
 	}
-	return tx.Commit(ctx)
+	_, err := db.CopyFrom(ctx, pgx.Identifier{"pageviews"}, pageviewCols, pgx.CopyFromRows(src))
+	return err
 }
 
 func utm(m map[string]string, key string) string {
@@ -117,44 +152,13 @@ func InsertEvents(ctx context.Context, db *pgxpool.Pool, rows []EventRowIn) erro
 	if len(rows) == 0 {
 		return nil
 	}
-	tx, err := db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
+	src := make([][]any, 0, len(rows))
 	for _, r := range rows {
-		if _, err := tx.Exec(ctx, `INSERT INTO events (site_id, session_id, name, url, props, created_at)
-				VALUES ($1,$2,$3,$4,$5,$6)`,
-			r.SiteID, r.SessionID, r.Name, r.URL, r.Props, r.CreatedAt); err != nil {
-			return err
-		}
+		src = append(src, []any{r.SiteID, r.SessionID, r.Name, r.URL, r.Props, r.CreatedAt})
 	}
-	return tx.Commit(ctx)
-}
-
-func AggregateDaily(ctx context.Context, db *pgxpool.Pool, siteID string, from, to time.Time) error {
-	_, err := db.Exec(ctx, `
-		WITH sess AS (
-			SELECT site_id, visited_at::date AS day, session_id, count(*) AS c
-			FROM pageviews
-			WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3
-			GROUP BY 1, 2, 3
-		)
-		INSERT INTO site_daily (site_id, day, pageviews, visitors, sessions, bounces)
-		SELECT site_id,
-		       day,
-		       sum(c),
-		       count(*),
-		       count(*),
-		       count(*) FILTER (WHERE c = 1)
-		FROM sess
-		GROUP BY site_id, day
-		ON CONFLICT (site_id, day) DO UPDATE SET
-			pageviews = EXCLUDED.pageviews,
-			visitors  = EXCLUDED.visitors,
-			sessions  = EXCLUDED.sessions,
-			bounces   = EXCLUDED.bounces`,
-		siteID, from, to)
+	_, err := db.CopyFrom(ctx, pgx.Identifier{"events"},
+		[]string{"site_id", "session_id", "name", "url", "props", "created_at"},
+		pgx.CopyFromRows(src))
 	return err
 }
 
@@ -1009,25 +1013,48 @@ func (q *Queries) Funnel(ctx context.Context, db *pgxpool.Pool, userID, siteID, 
 	}
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
 	from = clampFrom(ctx, db, siteID, from, to)
-	cond, fargs := f.fragment(4)
+
+	// Ordered funnel: step N only counts when its first visit happens after
+	// the first visit of step N-1. Filter args are appended after the path
+	// params so their placeholders start at base = 4 + len(paths).
+	base := 4 + len(paths)
+	cond, fargs := f.fragment(base)
 	for i := range paths {
 		step := paths[:i+1]
 		label := ""
 		if i == len(paths)-1 {
 			label = "converted"
 		}
-		var n int64
+
 		args := []any{siteID, from, to, step}
+		var sel []string
+		var wheres []string
+		for j := range step {
+			args = append(args, step[j])
+			sel = append(sel, fmt.Sprintf("MIN(visited_at) FILTER (WHERE path = $%d) AS t%d", 5+j, j+1))
+			if j > 0 {
+				wheres = append(wheres, fmt.Sprintf("t%d > t%d", j+1, j))
+			}
+		}
+		where := "t1 IS NOT NULL"
+		if len(wheres) > 0 {
+			where += " AND " + strings.Join(wheres, " AND ")
+		}
 		args = append(args, fargs...)
-		err := db.QueryRow(ctx, `
-			SELECT count(*) FROM (
-				SELECT session_id FROM pageviews
+
+		sql := `
+			WITH pv AS (
+				SELECT session_id, path, visited_at FROM pageviews
 				WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3
-				  AND path = ANY($4::text[])`+cond+`
-				GROUP BY session_id
-				HAVING count(DISTINCT path) = array_length($4, 1)
-			) s`, args...).Scan(&n)
-		if err != nil {
+				  AND path = ANY($4::text[])` + cond + `
+			),
+			step_times AS (
+				SELECT session_id, ` + strings.Join(sel, ", ") + `
+				FROM pv GROUP BY session_id
+			)
+			SELECT count(*) FROM step_times WHERE ` + where
+		var n int64
+		if err := db.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
 			return out, err
 		}
 		out.Steps = append(out.Steps, struct {
