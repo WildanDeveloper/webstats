@@ -55,8 +55,9 @@ type Buffer struct {
 }
 
 type siteIDEntry struct {
-	id string
-	at time.Time
+	id     string
+	domain string
+	at     time.Time
 }
 
 type boolEntry struct {
@@ -111,22 +112,29 @@ func (b *Buffer) SiteExists(ctx context.Context, key string) bool {
 }
 
 func (b *Buffer) SiteID(ctx context.Context, key string) string {
+	id, _ := b.SiteInfo(ctx, key)
+	return id
+}
+
+// SiteInfo resolves a site key to its id and registered domain (used for
+// origin validation). Cached with the same TTL as the id itself.
+func (b *Buffer) SiteInfo(ctx context.Context, key string) (string, string) {
 	b.mu.Lock()
 	if e, ok := b.siteIDs[key]; ok && time.Since(e.at) < cacheTTL {
-		id := e.id
+		id, domain := e.id, e.domain
 		b.mu.Unlock()
-		return id
+		return id, domain
 	}
 	b.mu.Unlock()
-	var id string
-	err := b.db.QueryRow(ctx, `SELECT id::text FROM sites WHERE site_key = $1`, key).Scan(&id)
+	var id, domain string
+	err := b.db.QueryRow(ctx, `SELECT id::text, COALESCE(domain, '') FROM sites WHERE site_key = $1`, key).Scan(&id, &domain)
 	if err != nil || id == "" {
-		return ""
+		return "", ""
 	}
 	b.mu.Lock()
-	b.siteIDs[key] = siteIDEntry{id: id, at: time.Now()}
+	b.siteIDs[key] = siteIDEntry{id: id, domain: strings.ToLower(strings.TrimSpace(domain)), at: time.Now()}
 	b.mu.Unlock()
-	return id
+	return id, domain
 }
 
 func (b *Buffer) Stop() { close(b.stop) }
