@@ -7,4 +7,4 @@
 package version
 
 // Version is the current release of WebStats.
-const Version = "1.1.2"
+const Version = "1.1.3"
