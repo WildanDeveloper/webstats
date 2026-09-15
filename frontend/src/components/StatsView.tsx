@@ -480,7 +480,8 @@ export default function StatsView(props: {
             icon={<IconPulse className="h-4 w-4 text-indigo-500" />}
           >
             <div className="space-y-3">
-              <form onSubmit={addGoal} className="flex flex-wrap items-center gap-2">
+              {!isPublic && (
+                <form onSubmit={addGoal} className="flex flex-wrap items-center gap-2">
                 <input
                   className="w-40 rounded-lg border border-edge bg-bg px-3 py-1.5 text-sm text-ink outline-none focus:border-indigo-500"
                   placeholder="Goal name"
@@ -506,7 +507,8 @@ export default function StatsView(props: {
                 <button className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">
                   Add goal
                 </button>
-              </form>
+                </form>
+              )}
               {goalMsg && <p className="text-xs text-red-500">{goalMsg}</p>}
               <div className="space-y-2">
                 {goals.map((g) => (
@@ -528,12 +530,14 @@ export default function StatsView(props: {
                           </span>
                         </div>
                       </div>
-                      <button
-                        onClick={() => deleteGoal(g.id)}
-                        className="rounded-lg p-1.5 text-faint transition-colors hover:bg-raised hover:text-red-500"
-                      >
-                        <IconTrash className="h-3.5 w-3.5" />
-                      </button>
+                      {!isPublic && (
+                        <button
+                          onClick={() => deleteGoal(g.id)}
+                          className="rounded-lg p-1.5 text-faint transition-colors hover:bg-raised hover:text-red-500"
+                        >
+                          <IconTrash className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   ))}
                 {goals.length === 0 && (

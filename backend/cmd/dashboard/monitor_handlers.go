@@ -58,6 +58,11 @@ func createMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 		if in.URL == "" {
 			return errJSON(c, 400, "url required")
 		}
+		u, verr := validateMonitorURL(in.URL)
+		if verr != nil {
+			return errJSON(c, 400, verr.Error())
+		}
+		in.URL = u
 		if in.IntervalSeconds < 30 {
 			in.IntervalSeconds = 60
 		}
@@ -94,6 +99,13 @@ func updateMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		if err := c.BodyParser(&in); err != nil {
 			return errJSON(c, 400, "bad json")
+		}
+		if in.URL != "" {
+			u, verr := validateMonitorURL(in.URL)
+			if verr != nil {
+				return errJSON(c, 400, verr.Error())
+			}
+			in.URL = u
 		}
 		curInterval, curStatus := 0, 0
 		curEnabled := false
@@ -152,10 +164,19 @@ func monitorChecksHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 404, "site not found")
 		}
 		limit := c.QueryInt("limit", 24)
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
 		rows, err := db.Query(c.Context(), `
-			SELECT status_code, ok, latency_ms, checked_at
-			FROM monitor_checks WHERE monitor_id = $1 ORDER BY checked_at DESC LIMIT $2`,
-			c.Params("mid"), limit)
+			SELECT mc.status_code, mc.ok, mc.latency_ms, mc.checked_at
+			FROM monitor_checks mc
+			JOIN monitors m ON m.id = mc.monitor_id
+			WHERE m.id = $1 AND m.site_id = $2
+			ORDER BY mc.checked_at DESC LIMIT $3`,
+			c.Params("mid"), siteID, limit)
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
@@ -176,7 +197,7 @@ func monitorChecksHandler(db *pgxpool.Pool) fiber.Handler {
 }
 
 func monitorLoop(ctx context.Context, db *pgxpool.Pool) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := ssrfMonitorClient
 	tick := time.NewTicker(30 * time.Second)
 	for {
 		select {
@@ -229,4 +250,3 @@ func runMonitors(ctx context.Context, db *pgxpool.Pool, client *http.Client) {
 			WHERE id = $3`, status, ok, m.ID)
 	}
 }
-

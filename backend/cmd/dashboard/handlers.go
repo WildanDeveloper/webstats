@@ -270,7 +270,10 @@ func updateSiteHandler(db *pgxpool.Pool) fiber.Handler {
 			sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
 			return nil
 		}
-		fields := []struct{ key, col string; allowEmpty bool }{
+		fields := []struct {
+			key, col   string
+			allowEmpty bool
+		}{
 			{"name", "name", false},
 			{"domain", "domain", true},
 			{"color", "color", true},
@@ -337,6 +340,12 @@ func sslCheckHandler(db *pgxpool.Pool) fiber.Handler {
 			host = host[i+3:]
 		}
 		host = strings.TrimSuffix(host, "/")
+		if i := strings.Index(host, "/"); i >= 0 {
+			host = host[:i]
+		}
+		if isBlockedIPHost(host) {
+			return errJSON(c, 400, "domain resolves to a private address")
+		}
 
 		res := fiber.Map{"url": "https://" + host}
 		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 6 * time.Second},
@@ -552,7 +561,10 @@ func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 			sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
 			return nil
 		}
-		fields := []struct{ key, col string; allowEmpty bool }{
+		fields := []struct {
+			key, col   string
+			allowEmpty bool
+		}{
 			{"name", "name", true},
 			{"email", "email", false},
 			{"role", "role", false},
@@ -754,4 +766,3 @@ func exportHandler(db *pgxpool.Pool) fiber.Handler {
 		return c.Send(out)
 	}
 }
-

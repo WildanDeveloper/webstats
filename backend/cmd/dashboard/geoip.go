@@ -69,15 +69,27 @@ func geoCachePut(ip string, r ipapiResult, success bool) {
 	}
 	geoCacheMu.Lock()
 	defer geoCacheMu.Unlock()
-	if len(geoCache) >= geoCacheMax {
-		now := time.Now()
-		for k, v := range geoCache {
-			if now.After(v.exp) || len(geoCache) >= geoCacheMax {
-				delete(geoCache, k)
-			}
+	now := time.Now()
+	// Evict expired entries first; only drop the single oldest entry if the
+	// cache is still full so one burst of new IPs cannot wipe the cache.
+	for k, v := range geoCache {
+		if now.After(v.exp) {
+			delete(geoCache, k)
 		}
 	}
-	geoCache[ip] = geoCacheEntry{result: r, exp: time.Now().Add(ttl)}
+	if len(geoCache) >= geoCacheMax {
+		var oldestKey string
+		var oldestExp time.Time
+		for k, v := range geoCache {
+			if oldestKey == "" || v.exp.Before(oldestExp) {
+				oldestKey, oldestExp = k, v.exp
+			}
+		}
+		if oldestKey != "" {
+			delete(geoCache, oldestKey)
+		}
+	}
+	geoCache[ip] = geoCacheEntry{result: r, exp: now.Add(ttl)}
 }
 
 var proxyProviders = []string{
@@ -126,7 +138,7 @@ func enrichVisitorIP(ctx context.Context, db *pgxpool.Pool, ip, siteID string) i
 	}
 	_, err = db.Exec(ctx, `UPDATE pageviews
 		SET isp = CASE WHEN isp = '' THEN $2 ELSE isp END,
-		    country = $7,
+		    country = CASE WHEN country = '' THEN $7 ELSE country END,
 		    region = $3, city = $4, lat = $5, lon = $6
 		WHERE ip = $1 AND site_id = $8`, ip, r.Isp, r.RegionName, r.City, r.Lat, r.Lon, r.CountryCode, siteID)
 	if err != nil {

@@ -401,7 +401,8 @@ func unsubscribeHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
-func logReport(ctx context.Context, pool *pgxpool.Pool, userID, siteID, event, channel, status, detail string) {	_, _ = pool.Exec(ctx, `
+func logReport(ctx context.Context, pool *pgxpool.Pool, userID, siteID, event, channel, status, detail string) {
+	_, _ = pool.Exec(ctx, `
 		INSERT INTO notif_logs (user_id, site_id, event, channel, status, detail)
 		VALUES ($1,$2,$3,$4,$5,$6)`, userID, siteID, event, channel, status, detail)
 }
@@ -439,17 +440,19 @@ func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteNa
 	add("Sessions", fmt.Sprint(out.Sessions))
 	topPages := ""
 	for _, p := range pages {
-		topPages += `<tr><td style="padding:4px 14px;color:#111827;font-size:13px">` + p.Key + `</td><td style="padding:4px 14px;color:#6b7280;font-size:13px;text-align:right">` + fmt.Sprint(p.Value) + `</td></tr>`
+		topPages += `<tr><td style="padding:4px 14px;color:#111827;font-size:13px">` + template.HTMLEscapeString(p.Key) + `</td><td style="padding:4px 14px;color:#6b7280;font-size:13px;text-align:right">` + fmt.Sprint(p.Value) + `</td></tr>`
 	}
 	topRefs := ""
 	for _, r := range refs {
-		topRefs += `<tr><td style="padding:4px 14px;color:#111827;font-size:13px">` + r.Key + `</td><td style="padding:4px 14px;color:#6b7280;font-size:13px;text-align:right">` + fmt.Sprint(r.Value) + `</td></tr>`
+		topRefs += `<tr><td style="padding:4px 14px;color:#111827;font-size:13px">` + template.HTMLEscapeString(r.Key) + `</td><td style="padding:4px 14px;color:#6b7280;font-size:13px;text-align:right">` + fmt.Sprint(r.Value) + `</td></tr>`
 	}
 	b.Subject = fmt.Sprintf("[WebStats] %s — 30 day report", siteName)
+	safeSiteName := template.HTMLEscapeString(siteName)
+	safeDomain := template.HTMLEscapeString(domain)
 	b.HTML = `<div style="max-width:560px;margin:24px auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-<div style="background:#111827;color:#fff;padding:16px 24px;font-size:16px;font-weight:700">` + siteName + ` — 30 day report</div>
+<div style="background:#111827;color:#fff;padding:16px 24px;font-size:16px;font-weight:700">` + safeSiteName + ` — 30 day report</div>
 <div style="padding:16px 24px">
-<p style="color:#6b7280;font-size:13px">` + domain + ` · generated ` + time.Now().UTC().Format("02 Jan 2006 15:04 UTC") + `</p>
+<p style="color:#6b7280;font-size:13px">` + safeDomain + ` · generated ` + time.Now().UTC().Format("02 Jan 2006 15:04 UTC") + `</p>
 <table style="width:100%;border-collapse:collapse">` + rows + `</table>
 <h3 style="font-size:13px;color:#111827;margin:18px 0 6px">Top pages</h3>
 <table style="width:100%;border-collapse:collapse">` + topPages + `</table>

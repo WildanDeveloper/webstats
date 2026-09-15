@@ -284,13 +284,11 @@ export default function SiteSettings({
     if (!site) return;
     setPublicMsg("");
     try {
-      let tok = publicToken;
-      if (enabled && !tok) {
-        tok = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-      }
+      // The token value is always chosen by the backend: the client only
+      // toggles visibility or asks for a rotation (public_token: "").
       const res = await apiFetch<SiteSettingsT>(`/api/sites/${site.id}/settings`, token, {
         method: "PATCH",
-        body: JSON.stringify({ public_enabled: enabled, public_token: tok || undefined }),
+        body: JSON.stringify(enabled ? { public_enabled: true } : { public_enabled: false }),
       });
       setPublicEnabled(res.public_enabled);
       setPublicToken(res.public_token || "");
@@ -305,10 +303,9 @@ export default function SiteSettings({
     if (!site) return;
     setPublicMsg("");
     try {
-      const tok = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
       const res = await apiFetch<SiteSettingsT>(`/api/sites/${site.id}/settings`, token, {
         method: "PATCH",
-        body: JSON.stringify({ public_token: tok }),
+        body: JSON.stringify({ public_token: "" }),
       });
       setPublicToken(res.public_token || "");
       setPublicMsg("New public link generated");

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"html/template"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/webstats/backend/internal/model"
 	"github.com/webstats/backend/internal/notify"
 )
+
+var publicTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 
 func isSiteOwner(ctx *fiber.Ctx, db *pgxpool.Pool, siteID, userID string) bool {
 	var ok bool
@@ -356,9 +359,6 @@ func updateSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 		if in.RetentionDays != nil && (*in.RetentionDays < 0 || *in.RetentionDays > 730) {
 			return errJSON(c, 400, "retention days must be between 0 and 730")
 		}
-		if in.PublicToken != nil && *in.PublicToken == "" {
-			return errJSON(c, 400, "invalid token")
-		}
 		_, err := db.Exec(c.Context(), `
 			INSERT INTO site_settings (site_id, ip_hashing, retention_days)
 			VALUES ($1, COALESCE($2, true), COALESCE($3, 0))
@@ -379,6 +379,8 @@ func updateSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 				}
 			}
 			// Never publish a dashboard behind an empty token — mint one.
+			// An explicitly empty token means "rotate": the client never
+			// picks the token value, only the backend does.
 			*tok = strings.TrimSpace(*tok)
 			if *tok == "" && (in.PublicEnabled == nil || *in.PublicEnabled) {
 				t, err := randHex(16)
@@ -386,6 +388,8 @@ func updateSettingsHandler(db *pgxpool.Pool) fiber.Handler {
 					return errJSON(c, 500, "token generation failed")
 				}
 				*tok = t
+			} else if *tok != "" && !publicTokenRe.MatchString(*tok) {
+				return errJSON(c, 400, "token must be 8-64 url-safe chars")
 			}
 			enabled := in.PublicEnabled
 			if enabled == nil {
@@ -431,8 +435,8 @@ func retentionLoop(ctx context.Context, pool *pgxpool.Pool) {
 			pool.Exec(ctx, `DELETE FROM pageviews WHERE site_id = $1 AND visited_at < $2`, x.siteID, cut)
 			pool.Exec(ctx, `DELETE FROM events WHERE site_id = $1 AND created_at < $2`, x.siteID, cut)
 			// Derived/operational tables must follow, otherwise aggregates and
-			// check history outlive the retention window.
-			pool.Exec(ctx, `DELETE FROM site_daily WHERE site_id = $1 AND day < $2::date`, x.siteID, cut)
+			// check history outlive the retention window. (site_daily was
+			// dropped by migration 010 and must not be referenced here.)
 			pool.Exec(ctx, `DELETE FROM site_checks WHERE site_id = $1 AND checked_at < $2`, x.siteID, cut)
 			pool.Exec(ctx, `DELETE FROM monitor_checks
 				WHERE monitor_id IN (SELECT id FROM monitors WHERE site_id = $1) AND checked_at < $2`,

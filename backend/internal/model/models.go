@@ -164,11 +164,11 @@ type MonitorCheck struct {
 }
 
 type ApiKey struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Prefix     string    `json:"prefix"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastUsedAt time.Time `json:"last_used_at"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
 }
 
 type InsightHighlight struct {

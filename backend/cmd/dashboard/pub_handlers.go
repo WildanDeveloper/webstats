@@ -61,8 +61,15 @@ func publicTopHandler(db *pgxpool.Pool, column string) fiber.Handler {
 			return errJSON(c, 404, "dashboard not found")
 		}
 		_ = owner
+		limit := c.QueryInt("limit", 10)
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 100 {
+			limit = 100
+		}
 		out, err := analytics.Q.Top(c.Context(), db, owner, siteID,
-			c.Query("period", "7d"), column, c.QueryInt("limit", 10),
+			c.Query("period", "7d"), column, limit,
 			c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if err != nil {
 			return errJSON(c, 500, "query failed")
@@ -164,8 +171,15 @@ func publicEventOccurrencesHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 404, "dashboard not found")
 		}
 		_ = owner
+		limit := c.QueryInt("limit", 50)
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
 		out, err := analytics.Q.EventOccurrences(c.Context(), db, owner, siteID,
-			c.Params("name"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), c.QueryInt("limit", 50))
+			c.Params("name"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), limit)
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
@@ -244,7 +258,7 @@ func attachMonitorDays(ctx context.Context, db *pgxpool.Pool, monitors []model.M
 		SELECT monitor_id, checked_at::date::text, count(*), count(*) FILTER (WHERE ok)
 		FROM monitor_checks
 		WHERE monitor_id = ANY($1::uuid[]) AND checked_at >= now() - interval '90 days'
-		GROUP BY 1, 2 ORDER BY 2`, ids)
+		GROUP BY 1, 2 ORDER BY 1, 2`, ids)
 	if err != nil {
 		return
 	}

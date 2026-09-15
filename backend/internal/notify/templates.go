@@ -1,6 +1,9 @@
 package notify
 
-import "fmt"
+import (
+	"fmt"
+	"html"
+)
 
 var EventLabels = map[string]string{
 	"site_down":     "Site is down",
@@ -30,9 +33,9 @@ func Email(p AlertPayload) string {
 	add := func(k, v string) {
 		rows += fmt.Sprintf(`<tr><td style="padding:8px 16px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:14px">%s</td><td style="padding:8px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;font-weight:600">%s</td></tr>`, k, v)
 	}
-	add("Site", p.SiteName)
-	add("Domain", p.Domain)
-	add("Status", p.Status)
+	add("Site", html.EscapeString(p.SiteName))
+	add("Domain", html.EscapeString(p.Domain))
+	add("Status", html.EscapeString(p.Status))
 	add("Time", p.Time)
 	if p.LatencyMs > 0 {
 		add("Latency", fmt.Sprintf("%d ms", p.LatencyMs))

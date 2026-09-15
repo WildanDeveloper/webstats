@@ -42,7 +42,11 @@ func main() {
 	buf := ingest.NewBuffer(cfg, pool, g, asn)
 	buf.Run(ctx)
 
-	app := fiber.New(fiber.Config{ProxyHeader: "X-Forwarded-For"})
+	app := fiber.New(fiber.Config{
+		ProxyHeader:             "X-Forwarded-For",
+		EnableTrustedProxyCheck: true,
+		TrustedProxies:          cfg.TrustedProxies,
+	})
 	// The tracker never sends credentials, so keep CORS permissive but do NOT
 	// combine arbitrary reflected origins with AllowCredentials.
 	app.Use(cors.New(cors.Config{
@@ -75,7 +79,7 @@ func main() {
 	}()
 
 	log.Printf("ingestion API %s listening on :%s", version.Version, cfg.Port)
-	if err := app.Listen(cfg.Bind+":"+cfg.Port); err != nil {
+	if err := app.Listen(cfg.Bind + ":" + cfg.Port); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
 

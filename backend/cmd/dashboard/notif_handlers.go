@@ -419,7 +419,7 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 			UPDATE notif_rules SET
 				event = COALESCE(NULLIF($1, ''), event),
 				channel = $2,
-				provider_id = $3::uuid,
+				provider_id = NULLIF($3, '')::uuid,
 				target = COALESCE(NULLIF($4, ''), target),
 				params = $5,
 				enabled = COALESCE($6, enabled)

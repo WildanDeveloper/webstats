@@ -259,10 +259,13 @@ func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID
 		return out, err
 	}
 	out.Visitors = out.Sessions
-	days := int64(to.Sub(from).Hours()/24) + 1
-	if days > 0 {
-		out.AvgPerDay = float64(out.Pageviews) / float64(days)
+	// The window is [from, to), i.e. exactly to-from long; do not add an
+	// extra day or short custom ranges understate avg_per_day.
+	days := int64(to.Sub(from).Hours() / 24)
+	if days < 1 {
+		days = 1
 	}
+	out.AvgPerDay = float64(out.Pageviews) / float64(days)
 	if out.Sessions > 0 {
 		out.BounceRate = float64(out.Bounces) / float64(out.Sessions) * 100
 	}
@@ -315,9 +318,13 @@ func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, site
 	if hourly {
 		goLayout = "2006-01-02 15:00"
 	}
-	out := fillSeries(from, to, hourly, goLayout, curC, curV)
-
-	prevFrom := from.Add(-(to.Sub(from)))
+	// Previous-period counts are keyed by the same bucket times shifted back
+	// by the window length, so both series stay aligned even when the range
+	// is not a whole number of steps (custom from/to with a time component).
+	span := to.Sub(from)
+	prevFrom := from.Add(-span)
+	prevC := map[string]int64{}
+	prevV := map[string]int64{}
 	if !from.IsZero() {
 		pargs := []any{siteID, prevFrom, from}
 		pargs = append(pargs, fargs...)
@@ -329,10 +336,8 @@ func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, site
 			GROUP BY 1 ORDER BY 1`,
 			pargs...)
 		if err != nil {
-			return out, err
+			return nil, err
 		}
-		prevC := map[string]int64{}
-		prevV := map[string]int64{}
 		for rows.Next() {
 			var d string
 			var n, v int64
@@ -345,15 +350,25 @@ func (q *Queries) Timeseries(ctx context.Context, db *pgxpool.Pool, userID, site
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return out, err
+			return nil, err
 		}
-		prev := fillSeries(prevFrom, from, hourly, goLayout, prevC, prevV)
-		for i := range out {
-			if i < len(prev) {
-				out[i].PrevPageviews = prev[i].Pageviews
-				out[i].PrevVisitors = prev[i].Visitors
-			}
-		}
+	}
+
+	step := 24 * time.Hour
+	if hourly {
+		step = time.Hour
+	}
+	out := make([]model.TimePoint, 0)
+	for t := from.Truncate(step); t.Before(to); t = t.Add(step) {
+		k := t.Format(goLayout)
+		pk := t.Add(-span).Format(goLayout)
+		out = append(out, model.TimePoint{
+			Date:          k,
+			Pageviews:     curC[k],
+			Visitors:      curV[k],
+			PrevPageviews: prevC[pk],
+			PrevVisitors:  prevV[pk],
+		})
 	}
 	return out, nil
 }
@@ -367,16 +382,14 @@ func (q *Queries) Top(ctx context.Context, db *pgxpool.Pool, userID, siteID, per
 	from, to, _ := PeriodBounds(period, fromStr, toStr)
 	from = clampFrom(ctx, db, siteID, from, to)
 	order := "count(*) DESC"
-	if column == "referrer" {
+	fill := "'unknown'"
+	switch column {
+	case "referrer":
+		// Rewrite the column AND the fill value together; checking the
+		// original name afterwards would be dead code.
 		column = "referrer_host"
 		order = "count(*) DESC NULLS LAST"
-	}
-	fill := "'unknown'"
-	if column == "referrer" {
 		fill = "'(direct)'"
-	}
-	if column == "country" {
-		fill = "'unknown'"
 	}
 	cond, fargs := f.fragment(3)
 	args := []any{siteID, from, to}
@@ -1015,12 +1028,14 @@ func (q *Queries) Funnel(ctx context.Context, db *pgxpool.Pool, userID, siteID, 
 	from = clampFrom(ctx, db, siteID, from, to)
 
 	// Ordered funnel: step N only counts when its first visit happens after
-	// the first visit of step N-1. Filter args are appended after the path
-	// params so their placeholders start at base = 4 + len(paths).
-	base := 4 + len(paths)
-	cond, fargs := f.fragment(base)
+	// the first visit of step N-1. One query runs per funnel prefix, so the
+	// filter placeholders are numbered per step (right after the path params
+	// of that step). A shared numbering would leave unused parameters in the
+	// shorter prefix queries and PostgreSQL rejects those (SQLSTATE 42P18).
 	for i := range paths {
-		step := paths[:i+1]
+		k := i + 1
+		cond, fargs := f.fragment(4 + k)
+		step := paths[:k]
 		label := ""
 		if i == len(paths)-1 {
 			label = "converted"

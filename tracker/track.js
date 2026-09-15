@@ -172,6 +172,7 @@
   }
 
   if (auto) {
+    lastPath = routeKey();
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
       pageview();
     } else {

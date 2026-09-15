@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,10 +48,23 @@ type Buffer struct {
 	asn     *geo.ASNResolver
 	redis   *redis.Client
 	ch      chan Record
-	siteIDs map[string]string
-	hashing map[string]bool
+	mu      sync.Mutex
+	siteIDs map[string]siteIDEntry
+	hashing map[string]boolEntry
 	stop    chan struct{}
 }
+
+type siteIDEntry struct {
+	id string
+	at time.Time
+}
+
+type boolEntry struct {
+	v  bool
+	at time.Time
+}
+
+const cacheTTL = 5 * time.Minute
 
 func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver, a *geo.ASNResolver) *Buffer {
 	b := &Buffer{
@@ -59,8 +73,8 @@ func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver, a *geo.ASN
 		geo:     g,
 		asn:     a,
 		ch:      make(chan Record, cfg.BufferSize),
-		siteIDs: map[string]string{},
-		hashing: map[string]bool{},
+		siteIDs: map[string]siteIDEntry{},
+		hashing: map[string]boolEntry{},
 		stop:    make(chan struct{}),
 	}
 	if cfg.RedisURL != "" {
@@ -74,15 +88,21 @@ func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver, a *geo.ASN
 }
 
 func (b *Buffer) IPHashing(ctx context.Context, siteID string) bool {
-	if v, ok := b.hashing[siteID]; ok {
+	b.mu.Lock()
+	if e, ok := b.hashing[siteID]; ok && time.Since(e.at) < cacheTTL {
+		v := e.v
+		b.mu.Unlock()
 		return v
 	}
+	b.mu.Unlock()
 	var ok bool
 	err := b.db.QueryRow(ctx, `SELECT ip_hashing FROM site_settings WHERE site_id = $1`, siteID).Scan(&ok)
 	if err != nil {
 		ok = true
 	}
-	b.hashing[siteID] = ok
+	b.mu.Lock()
+	b.hashing[siteID] = boolEntry{v: ok, at: time.Now()}
+	b.mu.Unlock()
 	return ok
 }
 
@@ -91,15 +111,21 @@ func (b *Buffer) SiteExists(ctx context.Context, key string) bool {
 }
 
 func (b *Buffer) SiteID(ctx context.Context, key string) string {
-	if id, ok := b.siteIDs[key]; ok {
+	b.mu.Lock()
+	if e, ok := b.siteIDs[key]; ok && time.Since(e.at) < cacheTTL {
+		id := e.id
+		b.mu.Unlock()
 		return id
 	}
+	b.mu.Unlock()
 	var id string
 	err := b.db.QueryRow(ctx, `SELECT id::text FROM sites WHERE site_key = $1`, key).Scan(&id)
-	if err != nil {
+	if err != nil || id == "" {
 		return ""
 	}
-	b.siteIDs[key] = id
+	b.mu.Lock()
+	b.siteIDs[key] = siteIDEntry{id: id, at: time.Now()}
+	b.mu.Unlock()
 	return id
 }
 
@@ -111,12 +137,14 @@ func (b *Buffer) Run(ctx context.Context) {
 
 func (b *Buffer) Push(r Record) {
 	if b.redis != nil {
-		data, err := json.Marshal(r)
-		if err == nil {
-			if err := b.redis.RPush(context.Background(), RedisList, data).Err(); err != nil {
-				log.Printf("redis push failed: %v", err)
+		if data, err := json.Marshal(r); err == nil {
+			if err := b.redis.RPush(context.Background(), RedisList, data).Err(); err == nil {
+				return
+			} else {
+				log.Printf("redis push failed, buffering locally: %v", err)
 			}
-			return
+		} else {
+			log.Printf("record marshal failed, buffering locally: %v", err)
 		}
 	}
 	select {

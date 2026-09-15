@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import Logo from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import UpdateNotice, { useInstalledVersion } from "@/components/UpdateNotice";
+import { CLIENT_API_URL } from "@/lib/auth";
 import {
   IconGrid,
   IconChart,
@@ -25,6 +26,7 @@ function UserMenu({
   role: string;
 }) {
   const router = useRouter();
+  const { data: session } = useSession();
   const initial = (name || email || "?").trim().charAt(0).toUpperCase();
   return (
     <div className="flex items-center gap-3 border-t border-edge px-5 py-4">
@@ -38,6 +40,12 @@ function UserMenu({
       <button
         title="Sign out"
         onClick={async () => {
+          try {
+            await fetch(`${CLIENT_API_URL}/api/auth/logout`, {
+              method: "POST",
+              headers: session?.token ? { Authorization: `Bearer ${session.token}` } : {},
+            });
+          } catch {}
           await signOut({ redirect: false });
           router.push("/login");
         }}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -93,11 +94,20 @@ func (s *smtpSender) Send(ctx context.Context, m Message) error {
 
 	var conn net.Conn
 	var err error
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
 	if s.ssl {
-		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: 15 * time.Second}, "tcp", addr,
-			&tls.Config{ServerName: s.host})
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
+		if err == nil {
+			var tlsConn *tls.Conn
+			tlsConn = tls.Client(conn, &tls.Config{ServerName: s.host})
+			if err := tlsConn.HandshakeContext(ctx); err != nil {
+				conn.Close()
+				return fmt.Errorf("smtp tls handshake: %w", err)
+			}
+			conn = tlsConn
+		}
 	} else {
-		conn, err = net.DialTimeout("tcp", addr, 15*time.Second)
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	}
 	if err != nil {
 		return fmt.Errorf("smtp dial: %w", err)
@@ -116,6 +126,9 @@ func (s *smtpSender) Send(ctx context.Context, m Message) error {
 		} else if s.user != "" {
 			return errors.New("smtp: server does not support STARTTLS but auth is configured")
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("smtp cancelled: %w", err)
 	}
 	if s.user != "" {
 		auth := smtp.PlainAuth("", s.user, s.pass, s.host)
@@ -321,6 +334,13 @@ func mimeHeader(s string) string {
 	clean := strings.ReplaceAll(strings.ReplaceAll(s, "\r", " "), "\n", " ")
 	if len(clean) == 0 {
 		return ""
+	}
+	// Non-ASCII subject/site names must be RFC 2047 encoded, otherwise
+	// mail servers mangle or reject the message.
+	for _, r := range clean {
+		if r > 127 {
+			return mime.QEncoding.Encode("utf-8", clean)
+		}
 	}
 	return clean
 }

@@ -58,8 +58,12 @@ export default function SiteList({
 
   async function remove(id: string) {
     if (!confirm("Delete this site and all of its data?")) return;
-    await apiFetch(`/api/sites/${id}`, token, { method: "DELETE" });
-    setSites((s) => s.filter((x) => x.id !== id));
+    try {
+      await apiFetch(`/api/sites/${id}`, token, { method: "DELETE" });
+      setSites((s) => s.filter((x) => x.id !== id));
+    } catch (err: any) {
+      setError(err.message);
+    }
   }
 
   const inputCls =

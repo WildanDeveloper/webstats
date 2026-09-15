@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"log"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -185,12 +183,7 @@ func main() {
 }
 
 func uptimeLoop(ctx context.Context, pool *pgxpool.Pool) {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
+	client := ssrfUptimeClient
 	ticker := time.NewTicker(60 * time.Second)
 	run := func() {
 		rows, err := pool.Query(ctx, `SELECT id, domain FROM sites WHERE domain <> ''`)

@@ -49,12 +49,13 @@ services:
   ingest:
     build: ./backend
     container_name: webstats-ingest
-    profiles: ["full"]
+    profiles: ["full", "queue"]
     environment:
       PORT: "8085"
       DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
       GEO_CSV: /app/data/geo.csv
       GEO_ASN_CSV: /app/data/asn.csv
+      REDIS_URL: ${REDIS_URL:-}
     ports:
       - "8085:8085"
     depends_on:

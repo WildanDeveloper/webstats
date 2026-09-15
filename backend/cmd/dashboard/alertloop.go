@@ -67,7 +67,8 @@ func fireSiteEvent(ctx context.Context, pool *pgxpool.Pool, siteID, event string
 	rows, err := pool.Query(ctx, `
 		SELECT r.user_id, r.id, r.channel, r.target, r.provider_id, r.params, s.name, s.domain
 		FROM notif_rules r JOIN sites s ON s.id = r.site_id
-		WHERE r.site_id = $1 AND r.event = $2 AND r.enabled`, siteID, event)
+		WHERE r.site_id = $1 AND r.event = $2 AND r.enabled
+		  AND (r.last_sent_at IS NULL OR r.last_sent_at < now() - interval '5 minutes')`, siteID, event)
 	if err != nil {
 		return
 	}
@@ -94,7 +95,9 @@ func checkSpikes(ctx context.Context, pool *pgxpool.Pool) {
 		SELECT r.user_id, r.id, r.site_id, r.channel, r.target, r.provider_id, r.params, s.name, s.domain
 		FROM notif_rules r JOIN sites s ON s.id = r.site_id
 		WHERE r.event = 'traffic_spike' AND r.enabled
-		  AND (r.last_sent_at IS NULL OR r.last_sent_at < now() - (COALESCE(NULLIF(r.params->>'cooldown_min', ''), '30') || ' minutes')::interval)`)
+		  AND (r.last_sent_at IS NULL OR r.last_sent_at < now()
+		    - CASE WHEN r.params->>'cooldown_min' ~ '^[0-9]+$'
+		         THEN (r.params->>'cooldown_min')::int ELSE 30 END * interval '1 minute')`)
 	if err != nil {
 		return
 	}
