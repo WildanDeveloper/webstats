@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { apiFetch, CLIENT_API_URL } from "@/lib/auth";
@@ -438,6 +438,8 @@ export default function StatsView(props: {
           <div className="grid gap-6 lg:grid-cols-2">
             <TopList title="Top pages" rows={props.pages} onSelect={(k) => setFilter("page", k)} />
             <TopList title="Referrers" rows={props.referrers} onSelect={(k) => setFilter("source", k)} />
+            <EngagementCard basePath={basePath} qs={baseQ()} get={pubGet} />
+            <EntryExitCard basePath={basePath} qs={baseQ()} get={pubGet} setFilter={setFilter} />
             <DonutChart title="Devices" rows={props.devices} onSelect={(k) => setFilter("device", k)} />
             <DonutChart title="Browsers" rows={props.browsers} onSelect={(k) => setFilter("browser", k)} />
             <DonutChart title="Operating systems" rows={props.os} onSelect={(k) => setFilter("os", k)} />
@@ -612,5 +614,149 @@ export default function StatsView(props: {
         </>
       )}
     </div>
+  );
+}
+
+type SessionStatsT = {
+  avg_duration_sec: number;
+  median_duration_sec: number;
+  avg_pages: number;
+  bounce_rate: number;
+  sessions: number;
+  prev_avg_duration_sec: number;
+  prev_avg_pages: number;
+};
+
+function fmtDuration(sec: number) {
+  if (sec <= 0) return "0s";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function EngagementCard({
+  basePath,
+  qs,
+  get,
+}: {
+  basePath: string;
+  qs: string;
+  get: <T>(path: string, qs?: string) => Promise<T>;
+}) {
+  const [stats, setStats] = useState<SessionStatsT | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    get<SessionStatsT>(`/sessions?${qs}`)
+      .then((s) => alive && setStats(s))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [basePath, qs]);
+
+  const durDelta =
+    stats && stats.prev_avg_duration_sec > 0
+      ? ((stats.avg_duration_sec - stats.prev_avg_duration_sec) / stats.prev_avg_duration_sec) * 100
+      : 0;
+  return (
+    <Card title="Engagement" icon={<IconPulse className="h-4 w-4 text-indigo-500" />}>
+      {stats ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div>
+            <p className="text-xs text-faint">Avg. visit</p>
+            <p className="mt-1 text-xl font-semibold text-ink">{fmtDuration(stats.avg_duration_sec)}</p>
+            <p className={`text-[11px] ${durDelta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {durDelta >= 0 ? "+" : ""}
+              {durDelta.toFixed(0)}% vs prev
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-faint">Median</p>
+            <p className="mt-1 text-xl font-semibold text-ink">{fmtDuration(stats.median_duration_sec)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-faint">Pages / visit</p>
+            <p className="mt-1 text-xl font-semibold text-ink">{stats.avg_pages.toFixed(1)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-faint">Bounce rate</p>
+            <p className="mt-1 text-xl font-semibold text-ink">{stats.bounce_rate.toFixed(1)}%</p>
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-faint">No session data in this period.</p>
+      )}
+    </Card>
+  );
+}
+
+function EntryExitCard({
+  basePath,
+  qs,
+  get,
+  setFilter,
+}: {
+  basePath: string;
+  qs: string;
+  get: <T>(path: string, qs?: string) => Promise<T>;
+  setFilter: (key: string, value: string) => void;
+}) {
+  const [tab, setTab] = useState<"entry" | "exit">("entry");
+  const [rows, setRows] = useState<Row[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    get<Row[]>(`/${tab === "entry" ? "entry" : "exit"}-pages?limit=10&${qs}`)
+      .then((r) => alive && setRows(r || []))
+      .catch(() => alive && setRows([]));
+    return () => {
+      alive = false;
+    };
+  }, [basePath, qs, tab]);
+
+  const total = rows.reduce((a, r) => a + r.value, 0);
+  return (
+    <Card title={tab === "entry" ? "Entry pages" : "Exit pages"} icon={<IconGlobe className="h-4 w-4 text-indigo-500" />}>
+      <div className="mb-3 flex rounded-lg border border-edge bg-raised/40 p-1 text-xs">
+        {(["entry", "exit"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`rounded-md px-3 py-1 transition-colors ${
+              tab === t ? "bg-raised font-medium text-ink" : "text-faint hover:text-ink"
+            }`}
+          >
+            {t === "entry" ? "Landing" : "Leaving"}
+          </button>
+        ))}
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-xs text-faint">No data in this period.</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <button
+              key={r.key}
+              onClick={() => setFilter("page", r.key)}
+              className="group block w-full text-left"
+              title={`Filter by ${r.key}`}
+            >
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="min-w-0 flex-1 truncate text-sm text-soft group-hover:text-ink">{r.key || "/"}</span>
+                <span className="text-xs text-faint">{total > 0 ? ((r.value / total) * 100).toFixed(0) : 0}%</span>
+                <span className="w-10 text-right text-sm font-medium text-ink">{r.value}</span>
+              </div>
+              <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-raised">
+                <div
+                  className="h-full rounded-full bg-indigo-500"
+                  style={{ width: `${total > 0 ? (r.value / total) * 100 : 0}%` }}
+                />
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }

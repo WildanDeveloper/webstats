@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/auth";
 import type { NotifLog, NotifProvider, NotifRule, Report, Site } from "@/lib/types";
 import { IconBell, IconPlus, IconTrash, IconBolt, IconMail, IconLink } from "@/components/icons";
 
-const PROVIDER_KINDS = ["smtp", "resend", "sendgrid", "mailgun", "postmark", "brevo"];
+const PROVIDER_KINDS = ["smtp", "resend", "sendgrid", "mailgun", "postmark", "brevo", "telegram"];
 
 const KIND_LABEL: Record<string, string> = {
   smtp: "SMTP",
@@ -14,18 +14,21 @@ const KIND_LABEL: Record<string, string> = {
   mailgun: "Mailgun",
   postmark: "Postmark",
   brevo: "Brevo",
+  telegram: "Telegram",
 };
 
 const EVENT_LABEL: Record<string, string> = {
   site_down: "Site down",
   site_up: "Site back online",
   traffic_spike: "Traffic spike",
+  cert_expiry: "SSL certificate expiring",
 };
 
 const EVENT_HINT: Record<string, string> = {
   site_down: "Fires when the uptime check starts failing",
   site_up: "Fires when the site recovers",
   traffic_spike: "Fires when the last hour exceeds the 7-day hourly average by the threshold",
+  cert_expiry: "Fires when the site's TLS certificate expires within N days (params.days, default 14)",
 };
 
 const KIND_FIELDS: Record<string, { key: string; label: string; type?: string; placeholder: string }[]> = {
@@ -50,6 +53,10 @@ const KIND_FIELDS: Record<string, { key: string; label: string; type?: string; p
   brevo: [
     { key: "api_key", label: "API key", type: "password", placeholder: "xkeysib-..." },
     { key: "from_name", label: "From name", placeholder: "WebStats" },
+  ],
+  telegram: [
+    { key: "bot_token", label: "Bot token", type: "password", placeholder: "123456:ABC-DEF..." },
+    { key: "chat_id", label: "Chat ID", placeholder: "-1001234567890" },
   ],
 };
 

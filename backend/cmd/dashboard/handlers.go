@@ -308,6 +308,15 @@ func orEmpty(p *string) string {
 	return *p
 }
 
+// validNotifEvent lists the events a notification rule can subscribe to.
+func validNotifEvent(e string) bool {
+	switch e {
+	case "site_down", "site_up", "traffic_spike", "cert_expiry":
+		return true
+	}
+	return false
+}
+
 func deleteSiteHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		tag, err := db.Exec(c.Context(), `
@@ -387,6 +396,35 @@ func siteOverviewHandler(db *pgxpool.Pool) fiber.Handler {
 func timeseriesHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		out, err := analytics.Q.Timeseries(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errJSON(c, 404, "site not found")
+		}
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
+func sessionStatsHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		out, err := analytics.Q.SessionStats(c.Context(), db, auth.UserID(c), c.Params("id"),
+			c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errJSON(c, 404, "site not found")
+		}
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
+func sessionBoundsHandler(db *pgxpool.Pool, kind string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		out, err := analytics.Q.SessionBounds(c.Context(), db, auth.UserID(c), c.Params("id"),
+			c.Query("period", "7d"), c.Query("from"), c.Query("to"), kind,
+			c.QueryInt("limit", 10), filtersFromQuery(c))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}

@@ -36,9 +36,10 @@ const (
 	KindMailgun  = "mailgun"
 	KindPostmark = "postmark"
 	KindBrevo    = "brevo"
+	KindTelegram = "telegram"
 )
 
-var ProviderKinds = []string{KindSMTP, KindResend, KindSendgrid, KindMailgun, KindPostmark, KindBrevo}
+var ProviderKinds = []string{KindSMTP, KindResend, KindSendgrid, KindMailgun, KindPostmark, KindBrevo, KindTelegram}
 
 func NewSender(kind string, cfg map[string]any, fromEmail string) (Sender, error) {
 	switch kind {
@@ -54,8 +55,76 @@ func NewSender(kind string, cfg map[string]any, fromEmail string) (Sender, error
 		return newPostmark(cfg, fromEmail), nil
 	case KindBrevo:
 		return newBrevo(cfg, fromEmail), nil
+	case KindTelegram:
+		return newTelegram(cfg)
 	}
 	return nil, fmt.Errorf("unknown provider kind: %s", kind)
+}
+
+func newTelegram(cfg map[string]any) (Sender, error) {
+	token, _ := cfg["bot_token"].(string)
+	chatID, _ := cfg["chat_id"].(string)
+	if token == "" || chatID == "" {
+		return nil, errors.New("telegram requires bot_token and chat_id")
+	}
+	return &telegramSender{botToken: token, chatID: chatID, url: "https://api.telegram.org/bot" + token + "/sendMessage"}, nil
+}
+
+type telegramSender struct {
+	botToken string
+	chatID   string
+	url      string
+}
+
+func (t *telegramSender) Send(ctx context.Context, m Message) error {
+	text := m.Text
+	if text == "" {
+		text = htmlToText(m.HTML)
+	}
+	body, err := json.Marshal(map[string]any{
+		"chat_id": t.chatID,
+		"text":    text,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram send: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("telegram status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+// htmlToText flattens simple alert emails into readable plain text for
+// chat providers that do not render HTML.
+func htmlToText(s string) string {
+	s = strings.ReplaceAll(s, "</p>", "\n")
+	s = strings.ReplaceAll(s, "</tr>", "\n")
+	s = strings.ReplaceAll(s, "</td>", "  ")
+	s = strings.ReplaceAll(s, "</h3>", "\n")
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '<' {
+			for i < len(s) && s[i] != '>' {
+				i++
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	out := b.String()
+	out = strings.Join(strings.Fields(strings.ReplaceAll(out, "&amp;", "&")), " ")
+	return strings.TrimSpace(out)
 }
 
 func newSMTP(cfg map[string]any, fromEmail string) (Sender, error) {

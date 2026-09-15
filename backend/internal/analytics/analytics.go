@@ -443,6 +443,121 @@ func (q *Queries) TopEvents(ctx context.Context, db *pgxpool.Pool, userID, siteI
 	return out, rows.Err()
 }
 
+// SessionStats summarizes visitor engagement over the window: how long a
+// session lasts, how deep it goes, and how often it is a single-pageview
+// bounce. Previous-window deltas let the UI show trends.
+type SessionStats struct {
+	AvgDurationSec     float64 `json:"avg_duration_sec"`
+	MedianDurationSec  float64 `json:"median_duration_sec"`
+	AvgPages           float64 `json:"avg_pages"`
+	BounceRate         float64 `json:"bounce_rate"`
+	Sessions           int64   `json:"sessions"`
+	PrevAvgDurationSec float64 `json:"prev_avg_duration_sec"`
+	PrevAvgPages       float64 `json:"prev_avg_pages"`
+}
+
+func (q *Queries) SessionStats(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string, f Filters) (SessionStats, error) {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
+		return SessionStats{}, err
+	} else if !ok {
+		return SessionStats{}, pgx.ErrNoRows
+	}
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
+	prevFrom := from.Add(-(to.Sub(from)))
+	cond, fargs := f.fragment(4)
+	args := []any{siteID, from, to, prevFrom}
+	args = append(args, fargs...)
+	var out SessionStats
+	var sessions, bounces int64
+	err := db.QueryRow(ctx, `
+		WITH cur AS (
+			SELECT session_id,
+			       count(*)::int AS pages,
+			       extract(epoch FROM max(visited_at) - min(visited_at)) AS dur
+			FROM pageviews
+			WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3`+cond+`
+			GROUP BY session_id
+		), prev AS (
+			SELECT avg(dur) AS dur, avg(pages) AS pages
+			FROM (
+				SELECT session_id,
+				       extract(epoch FROM max(visited_at) - min(visited_at)) AS dur,
+				       count(*)::int AS pages
+				FROM pageviews
+				WHERE site_id = $1 AND visited_at >= $4 AND visited_at < $2`+cond+`
+				GROUP BY session_id
+			) x
+		)
+		SELECT
+			COALESCE((SELECT avg(dur) FROM cur), 0),
+			COALESCE((SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY dur) FROM cur), 0),
+			COALESCE((SELECT avg(pages) FROM cur), 0),
+			COALESCE((SELECT count(*) FROM cur WHERE pages = 1), 0),
+			COALESCE((SELECT count(*) FROM cur), 0),
+			COALESCE((SELECT dur FROM prev), 0),
+			COALESCE((SELECT pages FROM prev), 0)`,
+		args...).Scan(&out.AvgDurationSec, &out.MedianDurationSec, &out.AvgPages,
+		&bounces, &sessions, &out.PrevAvgDurationSec, &out.PrevAvgPages)
+	if err != nil {
+		return out, err
+	}
+	out.Sessions = sessions
+	if sessions > 0 {
+		out.BounceRate = float64(bounces) / float64(sessions) * 100
+	}
+	return out, nil
+}
+
+// SessionBounds returns the first (entry) or last (exit) pageview of every
+// session in the window, aggregated per path. kind must be "entry" or "exit".
+func (q *Queries) SessionBounds(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr, kind string, limit int, f Filters) ([]model.Row, error) {
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, pgx.ErrNoRows
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	order := "ASC"
+	if kind == "exit" {
+		order = "DESC"
+	}
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
+	cond, fargs := f.fragment(3)
+	args := []any{siteID, from, to}
+	args = append(args, fargs...)
+	args = append(args, limit)
+	limitParam := fmt.Sprintf("$%d", len(args))
+	rows, err := db.Query(ctx, `
+		WITH ends AS (
+			SELECT DISTINCT ON (session_id) path
+			FROM pageviews
+			WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3`+cond+`
+			ORDER BY session_id, visited_at `+order+`
+		)
+		SELECT path, count(*) FROM ends GROUP BY path ORDER BY count(*) DESC LIMIT `+limitParam,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.Row, 0)
+	for rows.Next() {
+		var r model.Row
+		if err := rows.Scan(&r.Key, &r.Value); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 type SiteSeries struct {
 	SiteID string            `json:"site_id"`
 	Name   string            `json:"name"`

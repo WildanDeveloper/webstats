@@ -242,13 +242,20 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 	if b.IPHashing(context.Background(), siteID) {
 		ipHash = hashIP(ip, b.cfg.IPHashSalt)
 	}
+	referrer := str(raw["referrer"])
+	// Referrer spam is dropped at the door: the referrer itself and its
+	// derived host are blanked so neither the raw column nor the
+	// aggregated referrer_host ever sees the spam domain.
+	if spam := hostOf(referrer); isReferrerSpam(spam) {
+		referrer = ""
+	}
 	return Record{
 		Kind:      str(raw["kind"]),
 		SiteID:    siteID,
 		SessionID: str(raw["session_id"]),
 		Path:      str(raw["path"]),
 		Title:     str(raw["title"]),
-		Referrer:  str(raw["referrer"]),
+		Referrer:  referrer,
 		UA:        uaStr,
 		Screen:    str(raw["screen"]),
 		Lang:      str(raw["lang"]),

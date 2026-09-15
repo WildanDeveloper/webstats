@@ -84,6 +84,8 @@ export default function SiteSettings({
   const [monitors, setMonitors] = useState<Monitor[]>(initialMonitors);
   const [monUrl, setMonUrl] = useState("");
   const [monInterval, setMonInterval] = useState(60);
+  const [monKeyword, setMonKeyword] = useState("");
+  const [monKeywordMode, setMonKeywordMode] = useState("present");
   const [monMsg, setMonMsg] = useState("");
   const [checks, setChecks] = useState<Record<string, MonitorCheck[]>>({});
 
@@ -225,9 +227,15 @@ export default function SiteSettings({
     try {
       await apiFetch(`/api/sites/${site.id}/monitors`, token, {
         method: "POST",
-        body: JSON.stringify({ url: monUrl, interval_seconds: monInterval }),
+        body: JSON.stringify({
+          url: monUrl,
+          interval_seconds: monInterval,
+          keyword: monKeyword,
+          keyword_mode: monKeywordMode,
+        }),
       });
       setMonUrl("");
+      setMonKeyword("");
       const res = await apiFetch<Monitor[]>(`/api/sites/${site.id}/monitors`, token);
       setMonitors(res);
     } catch (err: any) {
@@ -804,6 +812,21 @@ export default function SiteSettings({
             <option value={300}>Every 5 min</option>
             <option value={900}>Every 15 min</option>
           </select>
+          <select
+            value={monKeywordMode}
+            onChange={(e) => setMonKeywordMode(e.target.value)}
+            title="Content check"
+            className="rounded-lg border border-edge bg-bg px-2 py-2 text-sm text-ink outline-none focus:border-indigo-500"
+          >
+            <option value="present">contains</option>
+            <option value="absent">not contains</option>
+          </select>
+          <input
+            value={monKeyword}
+            onChange={(e) => setMonKeyword(e.target.value)}
+            placeholder='Keyword (optional, e.g. "Service unavailable")'
+            className="min-w-56 flex-1 rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink placeholder-faint outline-none focus:border-indigo-500"
+          />
           <button
             type="submit"
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"

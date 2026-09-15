@@ -54,6 +54,45 @@ func publicTimeseriesHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func publicSessionStatsHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		siteID, owner, err := withPublicSite(db)(c)
+		if err != nil {
+			return errJSON(c, 404, "dashboard not found")
+		}
+		_ = owner
+		out, err := analytics.Q.SessionStats(c.Context(), db, owner, siteID,
+			c.Query("period", "7d"), c.Query("from"), c.Query("to"), filtersFromQuery(c))
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
+func publicSessionBoundsHandler(db *pgxpool.Pool, kind string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		siteID, owner, err := withPublicSite(db)(c)
+		if err != nil {
+			return errJSON(c, 404, "dashboard not found")
+		}
+		_ = owner
+		limit := c.QueryInt("limit", 10)
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 100 {
+			limit = 100
+		}
+		out, err := analytics.Q.SessionBounds(c.Context(), db, owner, siteID,
+			c.Query("period", "7d"), c.Query("from"), c.Query("to"), kind, limit, filtersFromQuery(c))
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
 func publicTopHandler(db *pgxpool.Pool, column string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		siteID, owner, err := withPublicSite(db)(c)

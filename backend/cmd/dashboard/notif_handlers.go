@@ -294,8 +294,8 @@ func createRuleHandler(db *pgxpool.Pool) fiber.Handler {
 		if err := c.BodyParser(&in); err != nil {
 			return errJSON(c, 400, "bad json")
 		}
-		if in.SiteID == "" || (in.Event != "site_down" && in.Event != "site_up" && in.Event != "traffic_spike") {
-			return errJSON(c, 400, "valid site_id and event (site_down, site_up, traffic_spike) required")
+		if in.SiteID == "" || (!validNotifEvent(in.Event)) {
+			return errJSON(c, 400, "valid site_id and event (site_down, site_up, traffic_spike, cert_expiry) required")
 		}
 		if in.Channel != "email" && in.Channel != "webhook" {
 			return errJSON(c, 400, "channel must be email or webhook")
@@ -412,8 +412,8 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 				return errJSON(c, 400, "webhook URL must start with http(s)://")
 			}
 		}
-		if in.Event != nil && *in.Event != "site_down" && *in.Event != "site_up" && *in.Event != "traffic_spike" {
-			return errJSON(c, 400, "event must be site_down, site_up or traffic_spike")
+		if in.Event != nil && !validNotifEvent(*in.Event) {
+			return errJSON(c, 400, "event must be site_down, site_up, traffic_spike or cert_expiry")
 		}
 		tag, err := db.Exec(c.Context(), `
 			UPDATE notif_rules SET

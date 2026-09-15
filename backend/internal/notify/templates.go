@@ -9,6 +9,7 @@ var EventLabels = map[string]string{
 	"site_down":     "Site is down",
 	"site_up":       "Site is back online",
 	"traffic_spike": "Traffic spike detected",
+	"cert_expiry":   "SSL certificate expiring soon",
 }
 
 type AlertPayload struct {

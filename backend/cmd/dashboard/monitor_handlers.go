@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -18,7 +20,7 @@ func listMonitorsHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 404, "site not found")
 		}
 		rows, err := db.Query(c.Context(), `
-			SELECT id, site_id, url, interval_seconds, expected_status, enabled,
+			SELECT id, site_id, url, interval_seconds, expected_status, keyword, keyword_mode, enabled,
 			       last_status, last_ok, last_check_at, uptime_pct, created_at
 			FROM monitors WHERE site_id = $1 ORDER BY created_at`, siteID)
 		if err != nil {
@@ -28,7 +30,7 @@ func listMonitorsHandler(db *pgxpool.Pool) fiber.Handler {
 		var out []model.Monitor
 		for rows.Next() {
 			var m model.Monitor
-			if err := rows.Scan(&m.ID, &m.SiteID, &m.URL, &m.IntervalSeconds, &m.ExpectedStatus, &m.Enabled,
+			if err := rows.Scan(&m.ID, &m.SiteID, &m.URL, &m.IntervalSeconds, &m.ExpectedStatus, &m.Keyword, &m.KeywordMode, &m.Enabled,
 				&m.LastStatus, &m.LastOK, &m.LastCheckAt, &m.UptimePct, &m.CreatedAt); err != nil {
 				return errJSON(c, 500, "scan failed")
 			}
@@ -48,9 +50,11 @@ func createMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 404, "site not found")
 		}
 		var in struct {
-			URL             string `json:"url"`
-			IntervalSeconds int    `json:"interval_seconds"`
-			ExpectedStatus  int    `json:"expected_status"`
+			URL             string  `json:"url"`
+			IntervalSeconds int     `json:"interval_seconds"`
+			ExpectedStatus  int     `json:"expected_status"`
+			Keyword         *string `json:"keyword"`
+			KeywordMode     string  `json:"keyword_mode"`
 		}
 		if err := c.BodyParser(&in); err != nil {
 			return errJSON(c, 400, "bad json")
@@ -69,14 +73,22 @@ func createMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 		if in.ExpectedStatus == 0 {
 			in.ExpectedStatus = 200
 		}
+		keyword := ""
+		if in.Keyword != nil {
+			keyword = strings.TrimSpace(*in.Keyword)
+		}
+		mode := "present"
+		if in.KeywordMode == "absent" {
+			mode = "absent"
+		}
 		var m model.Monitor
 		err := db.QueryRow(c.Context(), `
-			INSERT INTO monitors (site_id, url, interval_seconds, expected_status)
-			VALUES ($1, $2, $3, $4)
-			RETURNING id, site_id, url, interval_seconds, expected_status, enabled,
+			INSERT INTO monitors (site_id, url, interval_seconds, expected_status, keyword, keyword_mode)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id, site_id, url, interval_seconds, expected_status, keyword, keyword_mode, enabled,
 			          last_status, last_ok, last_check_at, uptime_pct, created_at`,
-			siteID, in.URL, in.IntervalSeconds, in.ExpectedStatus).Scan(
-			&m.ID, &m.SiteID, &m.URL, &m.IntervalSeconds, &m.ExpectedStatus, &m.Enabled,
+			siteID, in.URL, in.IntervalSeconds, in.ExpectedStatus, keyword, mode).Scan(
+			&m.ID, &m.SiteID, &m.URL, &m.IntervalSeconds, &m.ExpectedStatus, &m.Keyword, &m.KeywordMode, &m.Enabled,
 			&m.LastStatus, &m.LastOK, &m.LastCheckAt, &m.UptimePct, &m.CreatedAt)
 		if err != nil {
 			return errJSON(c, 500, "insert failed")
@@ -92,10 +104,12 @@ func updateMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 404, "site not found")
 		}
 		var in struct {
-			Enabled         *bool  `json:"enabled"`
-			IntervalSeconds *int   `json:"interval_seconds"`
-			ExpectedStatus  *int   `json:"expected_status"`
-			URL             string `json:"url"`
+			Enabled         *bool   `json:"enabled"`
+			IntervalSeconds *int    `json:"interval_seconds"`
+			ExpectedStatus  *int    `json:"expected_status"`
+			URL             string  `json:"url"`
+			Keyword         *string `json:"keyword"`
+			KeywordMode     string  `json:"keyword_mode"`
 		}
 		if err := c.BodyParser(&in); err != nil {
 			return errJSON(c, 400, "bad json")
@@ -109,9 +123,10 @@ func updateMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		curInterval, curStatus := 0, 0
 		curEnabled := false
+		var curKeyword, curMode string
 		if err := db.QueryRow(c.Context(), `
-			SELECT interval_seconds, expected_status, enabled FROM monitors WHERE id = $1 AND site_id = $2`,
-			c.Params("mid"), siteID).Scan(&curInterval, &curStatus, &curEnabled); err != nil {
+			SELECT interval_seconds, expected_status, enabled, keyword, keyword_mode FROM monitors WHERE id = $1 AND site_id = $2`,
+			c.Params("mid"), siteID).Scan(&curInterval, &curStatus, &curEnabled, &curKeyword, &curMode); err != nil {
 			return errJSON(c, 404, "monitor not found")
 		}
 		interval := curInterval
@@ -122,6 +137,14 @@ func updateMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 		if in.ExpectedStatus != nil && *in.ExpectedStatus > 0 {
 			status = *in.ExpectedStatus
 		}
+		keyword := curKeyword
+		if in.Keyword != nil {
+			keyword = strings.TrimSpace(*in.Keyword)
+		}
+		mode := curMode
+		if in.KeywordMode == "present" || in.KeywordMode == "absent" {
+			mode = in.KeywordMode
+		}
 		// Preserve the current value unless the request explicitly changes it,
 		// otherwise a PATCH without "enabled" would silently re-enable a paused monitor.
 		enabled := curEnabled
@@ -130,9 +153,10 @@ func updateMonitorHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		if _, err := db.Exec(c.Context(), `
 			UPDATE monitors SET enabled = $1, interval_seconds = $2, expected_status = $3,
-			       url = CASE WHEN $4 = '' THEN url ELSE $4 END
-			WHERE id = $5 AND site_id = $6`,
-			enabled, interval, status, in.URL, c.Params("mid"), siteID); err != nil {
+			       url = CASE WHEN $4 = '' THEN url ELSE $4 END,
+			       keyword = $5, keyword_mode = $6
+			WHERE id = $7 AND site_id = $8`,
+			enabled, interval, status, in.URL, keyword, mode, c.Params("mid"), siteID); err != nil {
 			return errJSON(c, 500, "update failed")
 		}
 		return c.JSON(fiber.Map{"ok": true})
@@ -211,12 +235,14 @@ func monitorLoop(ctx context.Context, db *pgxpool.Pool) {
 
 func runMonitors(ctx context.Context, db *pgxpool.Pool, client *http.Client) {
 	type mrow struct {
-		ID   string
-		URL  string
-		Code int
+		ID      string
+		URL     string
+		Code    int
+		Keyword string
+		KwMode  string
 	}
 	rows, err := db.Query(ctx, `
-		SELECT id, url, expected_status FROM monitors
+		SELECT id, url, expected_status, keyword, keyword_mode FROM monitors
 		WHERE enabled AND (last_check_at IS NULL OR last_check_at + interval_seconds * interval '1 second' <= now())`)
 	if err != nil {
 		return
@@ -224,7 +250,7 @@ func runMonitors(ctx context.Context, db *pgxpool.Pool, client *http.Client) {
 	var due []mrow
 	for rows.Next() {
 		var m mrow
-		if err := rows.Scan(&m.ID, &m.URL, &m.Code); err == nil {
+		if err := rows.Scan(&m.ID, &m.URL, &m.Code, &m.Keyword, &m.KwMode); err == nil {
 			due = append(due, m)
 		}
 	}
@@ -237,8 +263,20 @@ func runMonitors(ctx context.Context, db *pgxpool.Pool, client *http.Client) {
 		ok := false
 		if err == nil {
 			status = resp.StatusCode
-			resp.Body.Close()
 			ok = status == m.Code
+			if ok && m.Keyword != "" {
+				// Content check: a 200 body that is missing (or still
+				// showing) the keyword is a failed check. Only a bounded
+				// prefix is read so a huge response cannot blow memory.
+				body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+				if readErr != nil {
+					ok = false
+				} else {
+					found := strings.Contains(string(body), m.Keyword)
+					ok = found == (m.KwMode != "absent")
+				}
+			}
+			resp.Body.Close()
 		}
 		db.Exec(ctx, `
 			INSERT INTO monitor_checks (monitor_id, status_code, ok, latency_ms) VALUES ($1, $2, $3, $4)`,

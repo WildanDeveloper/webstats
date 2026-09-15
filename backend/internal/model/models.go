@@ -141,6 +141,8 @@ type Monitor struct {
 	URL             string       `json:"url"`
 	IntervalSeconds int          `json:"interval_seconds"`
 	ExpectedStatus  int          `json:"expected_status"`
+	Keyword         string       `json:"keyword"`
+	KeywordMode     string       `json:"keyword_mode"`
 	Enabled         bool         `json:"enabled"`
 	LastStatus      *int         `json:"last_status"`
 	LastOK          *bool        `json:"last_ok"`

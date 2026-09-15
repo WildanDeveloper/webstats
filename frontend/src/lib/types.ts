@@ -93,6 +93,8 @@ export type Monitor = {
   url: string;
   interval_seconds: number;
   expected_status: number;
+  keyword: string;
+  keyword_mode: string;
   enabled: boolean;
   last_status: number | null;
   last_ok: boolean | null;
