@@ -120,4 +120,4 @@ Releasing a new version:
 
 ---
 
-Created by [WildanDev](https://wildandev.tech) · licensed open source.
+Created by [WildanDev](https://wildandev.tech) · licensed under the [MIT License](LICENSE).
