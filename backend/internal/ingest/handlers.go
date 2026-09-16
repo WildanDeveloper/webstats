@@ -58,6 +58,12 @@ func (b *Buffer) CollectHandler(c *fiber.Ctx) error {
 	if id == "" {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown site_id"})
 	}
+	// Per-site flood protection: a token bucket keyed by the resolved site
+	// caps requests per minute regardless of how many source IPs are used.
+	if !b.limiter.allow(id) {
+		c.Set("Retry-After", "10")
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "rate limit exceeded"})
+	}
 	// Anti-spoofing: only browsers on the site's own domain may write data.
 	// Without this, anyone who reads the site_key out of the page source
 	// could fabricate pageviews with a plain curl.

@@ -33,6 +33,8 @@ type Overview struct {
 	AvgPerDay     float64 `json:"avg_per_day"`
 	PrevPageviews int64   `json:"prev_pageviews"`
 	PrevVisitors  int64   `json:"prev_visitors"`
+	PrevSessions  int64   `json:"prev_sessions"`
+	PrevBounces   int64   `json:"prev_bounces"`
 }
 
 type TimePoint struct {
@@ -165,6 +167,38 @@ type MonitorCheck struct {
 	CheckedAt  time.Time `json:"checked_at"`
 }
 
+type Heartbeat struct {
+	ID            string     `json:"id"`
+	SiteID        string     `json:"site_id"`
+	Name          string     `json:"name"`
+	PeriodSeconds int        `json:"period_seconds"`
+	GraceSeconds  int        `json:"grace_seconds"`
+	PingKey       string     `json:"ping_key"`
+	PingURL       string     `json:"ping_url,omitempty"`
+	LastPingAt    *time.Time `json:"last_ping_at"`
+	Status        string     `json:"status"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+type MaintenanceWindow struct {
+	ID          string    `json:"id"`
+	SiteID      string    `json:"site_id"`
+	Days        []string  `json:"days"`
+	StartMinute int       `json:"start_minute"`
+	EndMinute   int       `json:"end_minute"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type Incident struct {
+	ID         int64      `json:"id"`
+	SiteID     string     `json:"site_id"`
+	MonitorID  *string    `json:"monitor_id,omitempty"`
+	Kind       string     `json:"kind"`
+	StartedAt  time.Time  `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Reason     string     `json:"reason"`
+}
+
 type ApiKey struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
@@ -189,4 +223,40 @@ type PublicSiteInfo struct {
 	Name   string `json:"name"`
 	Domain string `json:"domain"`
 	Color  string `json:"color"`
+}
+
+type VitalStat struct {
+	Metric  string  `json:"metric"`
+	P75     float64 `json:"p75"`
+	Samples int64   `json:"samples"`
+}
+
+type VitalPathRow struct {
+	Path string  `json:"path"`
+	LCP  float64 `json:"lcp"`
+	CLS  float64 `json:"cls"`
+	INP  float64 `json:"inp"`
+	N    int64   `json:"n"`
+}
+
+type VitalTrendPoint struct {
+	Date string  `json:"date"`
+	LCP  float64 `json:"lcp"`
+	CLS  float64 `json:"cls"`
+	INP  float64 `json:"inp"`
+}
+
+type Vitals struct {
+	Summary []VitalStat       `json:"summary"`
+	Paths   []VitalPathRow    `json:"paths"`
+	Trend   []VitalTrendPoint `json:"trend"`
+}
+
+type SiteRank struct {
+	SiteID        string `json:"site_id"`
+	Name          string `json:"name"`
+	Color         string `json:"color"`
+	Pageviews     int64  `json:"pageviews"`
+	Visitors      int64  `json:"visitors"`
+	PrevPageviews int64  `json:"prev_pageviews"`
 }

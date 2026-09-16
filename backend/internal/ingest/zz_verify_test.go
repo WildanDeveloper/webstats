@@ -110,3 +110,35 @@ func TestPushFallsBackOnRedisError(t *testing.T) {
 
 // Verifies bug #7 fix: successful Redis push does not also hit the channel.
 // Uses a real redis if REDIS_TEST_URL is set; otherwise skipped.
+
+// Verifies E1: the per-site token bucket blocks once the burst is spent,
+// refills over time, and a nil limiter never blocks.
+func TestSiteLimiter(t *testing.T) {
+	l := newSiteLimiter(60) // 60/min, burst 60
+	for i := 0; i < 60; i++ {
+		if !l.allow("site-a") {
+			t.Fatalf("request %d within burst rejected", i+1)
+		}
+	}
+	if l.allow("site-a") {
+		t.Fatal("request over burst must be rejected")
+	}
+	if !l.allow("site-b") {
+		t.Fatal("independent site must not be throttled by site-a's bucket")
+	}
+	// Refill: 1 token per second; sleep 1.1s -> ~1 token.
+	time.Sleep(1100 * time.Millisecond)
+	if !l.allow("site-a") {
+		t.Fatal("bucket must refill over time")
+	}
+	if l.allow("site-a") {
+		t.Fatal("only one refilled token should be available")
+	}
+	if !newSiteLimiter(0).allow("site-a") {
+		t.Fatal("disabled limiter (0) must allow everything")
+	}
+	var nilLimiter *siteLimiter
+	if !nilLimiter.allow("x") {
+		t.Fatal("nil limiter must allow everything")
+	}
+}

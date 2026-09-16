@@ -27,6 +27,9 @@ type Config struct {
 	// TrustedProxies is the allowlist of proxies whose X-Forwarded-For
 	// header may be trusted when resolving client IPs.
 	TrustedProxies []string
+	// RateLimitPerMin caps ingest requests per site per minute (token
+	// bucket). 0 disables the limiter.
+	RateLimitPerMin int
 }
 
 func getenv(key, def string) string {
@@ -53,6 +56,7 @@ func Load() *Config {
 		PublicURL:      getenv("APP_PUBLIC_URL", "http://localhost:3000"),
 		APIPublicURL:   getenv("API_PUBLIC_URL", "http://localhost:8086"),
 		TrustedProxies: proxyList(getenv("TRUSTED_PROXIES", "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")),
+		RateLimitPerMin: envInt("RATE_LIMIT_PER_MIN", 600),
 	}
 	if c.BufferSize <= 0 {
 		c.BufferSize = 4096

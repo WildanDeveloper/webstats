@@ -16,6 +16,7 @@ import type {
   Row,
   Site,
   TimePoint,
+  Vitals,
   WorldPoint,
 } from "@/lib/types";
 import StatCards from "@/components/charts/StatCards";
@@ -114,6 +115,7 @@ export default function StatsView(props: {
   goals: GoalSummary[];
   insights: Insights | null;
   funnelReport: FunnelStep[];
+  vitals?: Vitals | null;
   error: string;
 }) {
   const router = useRouter();
@@ -423,9 +425,15 @@ export default function StatsView(props: {
             pageviews={props.overview?.pageviews ?? 0}
             visitors={props.overview?.visitors ?? 0}
             bounceRate={props.overview?.bounce_rate ?? 0}
-            avgPerDay={props.overview?.avg_per_day ?? 0}
+            sessions={props.overview?.sessions ?? 0}
             prevPageviews={props.overview?.prev_pageviews ?? 0}
             prevVisitors={props.overview?.prev_visitors ?? 0}
+            prevSessions={props.overview?.prev_sessions ?? 0}
+            prevBounceRate={
+              props.overview && props.overview.prev_sessions > 0 && props.overview.prev_bounces >= 0
+                ? (props.overview.prev_bounces / props.overview.prev_sessions) * 100
+                : undefined
+            }
           />
 
           <Card
@@ -445,6 +453,8 @@ export default function StatsView(props: {
             <DonutChart title="Operating systems" rows={props.os} onSelect={(k) => setFilter("os", k)} />
             <DonutChart title="Countries" rows={props.countries} onSelect={(k) => setFilter("country", k)} flags />
           </div>
+
+          {props.vitals && props.vitals.summary.length > 0 && <WebVitalsCard vitals={props.vitals} />}
 
           {props.campaigns.length > 0 && (
             <Card title="Campaigns (UTM)" icon={<IconGlobe className="h-4 w-4 text-indigo-500" />}>
@@ -626,6 +636,81 @@ type SessionStatsT = {
   prev_avg_duration_sec: number;
   prev_avg_pages: number;
 };
+
+const VITAL_METRICS: { key: string; label: string; good: number; poor: number; unit: string }[] = [
+  { key: "lcp", label: "LCP", good: 2500, poor: 4000, unit: "ms" },
+  { key: "cls", label: "CLS", good: 0.1, poor: 0.25, unit: "" },
+  { key: "inp", label: "INP", good: 200, poor: 500, unit: "ms" },
+  { key: "fcp", label: "FCP", good: 1800, poor: 3000, unit: "ms" },
+  { key: "ttfb", label: "TTFB", good: 800, poor: 1800, unit: "ms" },
+];
+
+function vitalTone(metric: string, v: number) {
+  const def = VITAL_METRICS.find((m) => m.key === metric);
+  if (!def) return "text-ink";
+  if (v <= def.good) return "text-emerald-500";
+  if (v <= def.poor) return "text-amber-500";
+  return "text-red-400";
+}
+
+function fmtVital(metric: string, v: number) {
+  const def = VITAL_METRICS.find((m) => m.key === metric);
+  if (!def) return v.toFixed(0);
+  return def.unit === "ms" ? `${Math.round(v)}ms` : v.toFixed(3);
+}
+
+function WebVitalsCard({ vitals }: { vitals: Vitals }) {
+  const summary = [...vitals.summary].sort(
+    (a, b) =>
+      VITAL_METRICS.findIndex((m) => m.key === a.metric) -
+      VITAL_METRICS.findIndex((m) => m.key === b.metric),
+  );
+  return (
+    <Card
+      title="Web Vitals (p75)"
+      icon={<IconPulse className="h-4 w-4 text-indigo-500" />}
+      right={<span className="text-[11px] text-faint">opt-in via data-vitals</span>}
+    >
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {summary.map((s) => (
+          <div key={s.metric}>
+            <p className="text-xs text-faint">{s.metric.toUpperCase()}</p>
+            <p className={`mt-1 text-xl font-semibold ${vitalTone(s.metric, s.p75)}`}>
+              {fmtVital(s.metric, s.p75)}
+            </p>
+            <p className="text-[11px] text-faint">{s.samples} samples</p>
+          </div>
+        ))}
+      </div>
+      {vitals.paths.length > 0 && (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-edge text-xs uppercase tracking-wide text-faint">
+                <th className="px-3 py-2 font-medium">Path</th>
+                <th className="px-3 py-2 text-right font-medium">LCP</th>
+                <th className="px-3 py-2 text-right font-medium">CLS</th>
+                <th className="px-3 py-2 text-right font-medium">INP</th>
+                <th className="px-3 py-2 text-right font-medium">Samples</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vitals.paths.map((p, i) => (
+                <tr key={i} className="border-b border-edge/60 last:border-0">
+                  <td className="max-w-64 truncate px-3 py-2 text-ink" title={p.path}>{p.path}</td>
+                  <td className={`px-3 py-2 text-right ${p.lcp ? vitalTone("lcp", p.lcp) : "text-faint"}`}>{p.lcp ? fmtVital("lcp", p.lcp) : "—"}</td>
+                  <td className={`px-3 py-2 text-right ${p.cls ? vitalTone("cls", p.cls) : "text-faint"}`}>{p.cls ? fmtVital("cls", p.cls) : "—"}</td>
+                  <td className={`px-3 py-2 text-right ${p.inp ? vitalTone("inp", p.inp) : "text-faint"}`}>{p.inp ? fmtVital("inp", p.inp) : "—"}</td>
+                  <td className="px-3 py-2 text-right text-soft">{p.n}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function fmtDuration(sec: number) {
   if (sec <= 0) return "0s";

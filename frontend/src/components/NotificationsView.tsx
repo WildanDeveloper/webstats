@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/auth";
 import type { NotifLog, NotifProvider, NotifRule, Report, Site } from "@/lib/types";
 import { IconBell, IconPlus, IconTrash, IconBolt, IconMail, IconLink } from "@/components/icons";
 
-const PROVIDER_KINDS = ["smtp", "resend", "sendgrid", "mailgun", "postmark", "brevo", "telegram"];
+const PROVIDER_KINDS = ["smtp", "resend", "sendgrid", "mailgun", "postmark", "brevo", "telegram", "slack", "discord"];
 
 const KIND_LABEL: Record<string, string> = {
   smtp: "SMTP",
@@ -15,6 +15,8 @@ const KIND_LABEL: Record<string, string> = {
   postmark: "Postmark",
   brevo: "Brevo",
   telegram: "Telegram",
+  slack: "Slack",
+  discord: "Discord",
 };
 
 const EVENT_LABEL: Record<string, string> = {
@@ -22,6 +24,9 @@ const EVENT_LABEL: Record<string, string> = {
   site_up: "Site back online",
   traffic_spike: "Traffic spike",
   cert_expiry: "SSL certificate expiring",
+  heartbeat_missed: "Heartbeat missed",
+  heartbeat_ok: "Heartbeat recovered",
+  vitals_lcp: "LCP degraded",
 };
 
 const EVENT_HINT: Record<string, string> = {
@@ -29,6 +34,9 @@ const EVENT_HINT: Record<string, string> = {
   site_up: "Fires when the site recovers",
   traffic_spike: "Fires when the last hour exceeds the 7-day hourly average by the threshold",
   cert_expiry: "Fires when the site's TLS certificate expires within N days (params.days, default 14)",
+  heartbeat_missed: "Fires when a heartbeat receives no ping within period + grace",
+  heartbeat_ok: "Fires when a late heartbeat receives a ping again",
+  vitals_lcp: "Fires when the 24h p75 LCP of web_vitals events exceeds the threshold ms (needs 20+ samples)",
 };
 
 const KIND_FIELDS: Record<string, { key: string; label: string; type?: string; placeholder: string }[]> = {
@@ -58,6 +66,8 @@ const KIND_FIELDS: Record<string, { key: string; label: string; type?: string; p
     { key: "bot_token", label: "Bot token", type: "password", placeholder: "123456:ABC-DEF..." },
     { key: "chat_id", label: "Chat ID", placeholder: "-1001234567890" },
   ],
+  slack: [{ key: "webhook_url", label: "Incoming webhook URL", type: "password", placeholder: "https://hooks.slack.com/services/..." }],
+  discord: [{ key: "webhook_url", label: "Webhook URL", type: "password", placeholder: "https://discord.com/api/webhooks/..." }],
 };
 
 const MASK = "••••••••";
@@ -110,6 +120,7 @@ export default function NotificationsView({
   const [rTarget, setRTarget] = useState("");
   const [rThreshold, setRThreshold] = useState("3");
   const [rCooldown, setRCooldown] = useState("30");
+  const [rVitalsThreshold, setRVitalsThreshold] = useState("2500");
   const [rSecret, setRSecret] = useState("");
   const [showAddRule, setShowAddRule] = useState(false);
 
@@ -201,6 +212,10 @@ export default function NotificationsView({
       if (rEvent === "traffic_spike") {
         params.threshold = parseInt(rThreshold || "3", 10) || 3;
         params.cooldown_min = parseInt(rCooldown || "30", 10) || 30;
+      }
+      if (rEvent === "vitals_lcp" && parseInt(rVitalsThreshold || "2500", 10) > 0) {
+        params.threshold = parseInt(rVitalsThreshold || "2500", 10);
+        params.cooldown_min = parseInt(rCooldown || "720", 10) || 720;
       }
       if (rChannel === "webhook" && rSecret) params.secret = rSecret;
       const res = await apiFetch<{ id: string }>("/api/notifications/rules", token, {
@@ -490,6 +505,9 @@ async function refreshLogs() {
                 <option value="site_down">Site down</option>
                 <option value="site_up">Site back online</option>
                 <option value="traffic_spike">Traffic spike</option>
+                <option value="heartbeat_missed">Heartbeat missed</option>
+                <option value="heartbeat_ok">Heartbeat recovered</option>
+                <option value="vitals_lcp">LCP degraded (Web Vitals)</option>
               </select>
               <select
                 className={inputCls}
@@ -498,6 +516,8 @@ async function refreshLogs() {
               >
                 <option value="webhook">Webhook</option>
                 <option value="email">Email</option>
+                <option value="slack">Slack</option>
+                <option value="discord">Discord</option>
               </select>
               {rChannel === "email" ? (
                 <select className={inputCls} value={rProvider} onChange={(e) => setRProvider(e.target.value)} required>
@@ -520,6 +540,12 @@ async function refreshLogs() {
               <div className="grid gap-3 md:grid-cols-2">
                 <input className={inputCls} type="number" min={1} placeholder="Threshold (x average, default 3)" value={rThreshold} onChange={(e) => setRThreshold(e.target.value)} />
                 <input className={inputCls} type="number" min={1} placeholder="Cooldown minutes (default 30)" value={rCooldown} onChange={(e) => setRCooldown(e.target.value)} />
+              </div>
+            )}
+            {rEvent === "vitals_lcp" && (
+              <div className="grid gap-3 md:grid-cols-2">
+                <input className={inputCls} type="number" min={100} placeholder="p75 LCP threshold in ms (default 2500)" value={rVitalsThreshold} onChange={(e) => setRVitalsThreshold(e.target.value)} />
+                <input className={inputCls} type="number" min={5} placeholder="Cooldown minutes (default 720)" value={rCooldown === "30" ? "720" : rCooldown} onChange={(e) => setRCooldown(e.target.value)} />
               </div>
             )}
             <p className="text-xs text-faint">{EVENT_HINT[rEvent]}</p>

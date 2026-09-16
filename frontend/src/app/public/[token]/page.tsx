@@ -9,6 +9,7 @@ import type {
   Row,
   Site,
   TimePoint,
+  Vitals,
   WorldPoint,
 } from "@/lib/types";
 import StatsView from "@/components/StatsView";
@@ -67,7 +68,7 @@ export default async function PublicDashboardPage({
     }
   }
 
-  const [status, overview, timeseries, pages, referrers, devices, browsers, os, countries, events, world, campaigns, goals, insights, funnel] =
+  const [status, overview, timeseries, pages, referrers, devices, browsers, os, countries, events, world, campaigns, goals, insights, funnel, vitals] =
     await Promise.all([
       get<PublicStatus | null>(`/status`, null),
       get<Overview | null>(`/overview?${q}`, null),
@@ -84,6 +85,7 @@ export default async function PublicDashboardPage({
       get<GoalSummary[]>(`/goals?${q}`, []),
       get<Insights | null>(`/insights?${q}`, null),
       get<{ report: { steps: FunnelStep[] } }>(`/funnel?${q}`, { report: { steps: [] } }),
+      get<Vitals | null>(`/vitals?${q}`, null),
     ]);
 
   const site: Site | null = status
@@ -124,6 +126,7 @@ export default async function PublicDashboardPage({
           goals={goals}
           insights={insights}
           funnelReport={funnel?.report?.steps || []}
+          vitals={vitals}
           error={overview === null ? "dashboard not found" : ""}
         />
       </div>

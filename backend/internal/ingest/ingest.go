@@ -51,6 +51,7 @@ type Buffer struct {
 	mu      sync.Mutex
 	siteIDs map[string]siteIDEntry
 	hashing map[string]boolEntry
+	limiter *siteLimiter
 	stop    chan struct{}
 }
 
@@ -76,6 +77,7 @@ func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver, a *geo.ASN
 		ch:      make(chan Record, cfg.BufferSize),
 		siteIDs: map[string]siteIDEntry{},
 		hashing: map[string]boolEntry{},
+		limiter: newSiteLimiter(cfg.RateLimitPerMin),
 		stop:    make(chan struct{}),
 	}
 	if cfg.RedisURL != "" {

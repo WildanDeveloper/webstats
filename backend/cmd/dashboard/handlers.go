@@ -311,7 +311,7 @@ func orEmpty(p *string) string {
 // validNotifEvent lists the events a notification rule can subscribe to.
 func validNotifEvent(e string) bool {
 	switch e {
-	case "site_down", "site_up", "traffic_spike", "cert_expiry":
+	case "site_down", "site_up", "traffic_spike", "cert_expiry", "heartbeat_missed", "heartbeat_ok", "vitals_lcp":
 		return true
 	}
 	return false
@@ -477,6 +477,19 @@ func eventDetailsHandler(db *pgxpool.Pool) fiber.Handler {
 func eventOccurrencesHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		out, err := analytics.Q.EventOccurrences(c.Context(), db, auth.UserID(c), c.Params("id"), c.Params("name"), c.Query("period", "7d"), c.Query("from"), c.Query("to"), 10)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errJSON(c, 404, "site not found")
+		}
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
+func vitalsHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		out, err := analytics.Q.Vitals(c.Context(), db, auth.UserID(c), c.Params("id"), c.Query("period", "7d"), c.Query("from"), c.Query("to"))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "site not found")
 		}

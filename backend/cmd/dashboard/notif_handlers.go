@@ -23,6 +23,18 @@ var providerSecrets = map[string][]string{
 	"postmark": {"server_token"},
 	"brevo":    {"api_key"},
 	"smtp":     {"pass"},
+	"slack":    {"webhook_url"},
+	"discord":  {"webhook_url"},
+}
+
+// validRuleChannel lists the channels a notification rule can deliver to.
+// slack/discord take a webhook URL as the target; email needs a provider.
+func validRuleChannel(ch string) bool {
+	switch ch {
+	case "email", "webhook", "slack", "discord":
+		return true
+	}
+	return false
 }
 
 func maskConfig(kind string, cfg map[string]any) map[string]any {
@@ -295,10 +307,10 @@ func createRuleHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 400, "bad json")
 		}
 		if in.SiteID == "" || (!validNotifEvent(in.Event)) {
-			return errJSON(c, 400, "valid site_id and event (site_down, site_up, traffic_spike, cert_expiry) required")
+			return errJSON(c, 400, "valid site_id and event (site_down, site_up, traffic_spike, cert_expiry, heartbeat_missed, heartbeat_ok, vitals_lcp) required")
 		}
-		if in.Channel != "email" && in.Channel != "webhook" {
-			return errJSON(c, 400, "channel must be email or webhook")
+		if !validRuleChannel(in.Channel) {
+			return errJSON(c, 400, "channel must be email, webhook, slack or discord")
 		}
 		enabled := true
 		if in.Enabled != nil {
@@ -375,8 +387,8 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		if in.Channel != nil {
 			channel = *in.Channel
-			if channel != "email" && channel != "webhook" {
-				return errJSON(c, 400, "channel must be email or webhook")
+			if !validRuleChannel(channel) {
+				return errJSON(c, 400, "channel must be email, webhook, slack or discord")
 			}
 		}
 		provider := curProvider
@@ -413,7 +425,12 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 			}
 		}
 		if in.Event != nil && !validNotifEvent(*in.Event) {
-			return errJSON(c, 400, "event must be site_down, site_up, traffic_spike or cert_expiry")
+			return errJSON(c, 400, "invalid event")
+		}
+		if in.Target != nil && (channel == "webhook" || channel == "slack" || channel == "discord") {
+			if !strings.HasPrefix(target, "https://") && !strings.HasPrefix(target, "http://") {
+				return errJSON(c, 400, "target must start with http(s)://")
+			}
 		}
 		tag, err := db.Exec(c.Context(), `
 			UPDATE notif_rules SET
@@ -483,7 +500,8 @@ func deliverRule(ctx context.Context, db *pgxpool.Pool, uid, channel, target str
 	providerID *string, params map[string]any, payload notify.AlertPayload, isTest bool) (string, error) {
 
 	status, detail := "ok", ""
-	if channel == "webhook" {
+	switch channel {
+	case "webhook":
 		secret := ""
 		if s, ok := params["secret"].(string); ok {
 			secret = s
@@ -492,7 +510,19 @@ func deliverRule(ctx context.Context, db *pgxpool.Pool, uid, channel, target str
 		if err != nil {
 			status, detail = "fail", err.Error()
 		}
-	} else {
+	case "slack", "discord":
+		// Chat hooks reuse the Sender abstraction with the rule target as
+		// the incoming webhook URL and the shared alert templates as text.
+		sender, err := notify.NewSender(channel, map[string]any{"webhook_url": target}, "")
+		if err != nil {
+			status, detail = "fail", err.Error()
+		} else if err := sender.Send(ctx, notify.Message{
+			Subject: notify.EmailSubject(payload),
+			HTML:    notify.Email(payload),
+		}); err != nil {
+			status, detail = "fail", err.Error()
+		}
+	default:
 		if providerID == nil || *providerID == "" {
 			status, detail = "fail", "email rule has no provider configured"
 		} else {

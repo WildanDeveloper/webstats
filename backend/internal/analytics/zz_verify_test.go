@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/webstats/backend/internal/model"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {
@@ -125,5 +126,104 @@ func TestSessionBoundsEntryExit(t *testing.T) {
 	small, err := Q.SessionBounds(ctx, db, uid, sid, "24h", "", "", "entry", 0, Filters{})
 	if err != nil || len(small) > 1 {
 		t.Fatalf("limit clamp failed: err=%v rows=%d", err, len(small))
+	}
+}
+
+// Verifies A3: web_vitals events aggregate to p75 per metric, per-path
+// breakdown and a daily trend.
+func TestVitals(t *testing.T) {
+	db := testPool(t)
+	ctx := context.Background()
+	var uid, sid string
+	must(t, db.QueryRow(ctx, `INSERT INTO users (email, password_hash, name) VALUES ('vit1@test.dev','x','V1') ON CONFLICT (email) DO UPDATE SET name='V1' RETURNING id::text`).Scan(&uid))
+	must(t, db.QueryRow(ctx, `INSERT INTO sites (user_id, name, domain, site_key) VALUES ($1,'V1','vit1.example','vk1') ON CONFLICT (site_key) DO UPDATE SET name='V1' RETURNING id::text`, uid).Scan(&sid))
+	now := time.Now().UTC().Add(-time.Hour)
+	evs := []EventRowIn{
+		{SiteID: sid, SessionID: "v1", Name: "web_vitals", URL: "/slow", Props: map[string]any{"metric": "lcp", "value": 4000}, CreatedAt: now},
+		{SiteID: sid, SessionID: "v2", Name: "web_vitals", URL: "/slow", Props: map[string]any{"metric": "lcp", "value": 2000}, CreatedAt: now},
+		{SiteID: sid, SessionID: "v3", Name: "web_vitals", URL: "/", Props: map[string]any{"metric": "lcp", "value": 1000}, CreatedAt: now},
+		{SiteID: sid, SessionID: "v4", Name: "web_vitals", URL: "/", Props: map[string]any{"metric": "cls", "value": 0.05}, CreatedAt: now},
+	}
+	must(t, InsertEvents(ctx, db, evs))
+
+	out, err := Q.Vitals(ctx, db, uid, sid, "24h", "", "")
+	if err != nil {
+		t.Fatalf("Vitals: %v", err)
+	}
+	found := map[string]float64{}
+	for _, s := range out.Summary {
+		found[s.Metric] = s.P75
+		if s.Samples < 1 {
+			t.Fatalf("metric %s has no samples: %+v", s.Metric, out.Summary)
+		}
+	}
+	if found["lcp"] < 2000 || found["lcp"] > 4000 {
+		t.Fatalf("lcp p75 out of expected band: %v (summary %+v)", found["lcp"], out.Summary)
+	}
+	var slow *model.VitalPathRow
+	for i := range out.Paths {
+		if out.Paths[i].Path == "/slow" {
+			slow = &out.Paths[i]
+		}
+	}
+	if slow == nil || slow.LCP != 4000 {
+		t.Fatalf("/slow path missing or wrong p75: %+v", out.Paths)
+	}
+	if len(out.Trend) == 0 {
+		t.Fatalf("expected at least one trend point")
+	}
+}
+
+// Verifies A16: overview returns previous-window counters alongside the
+// current ones so the UI can compute deltas.
+func TestOverviewPrevWindow(t *testing.T) {
+	db := testPool(t)
+	ctx := context.Background()
+	var uid, sid string
+	must(t, db.QueryRow(ctx, `INSERT INTO users (email, password_hash, name) VALUES ('an3@test.dev','x','A3') ON CONFLICT (email) DO UPDATE SET name='A3' RETURNING id::text`).Scan(&uid))
+	must(t, db.QueryRow(ctx, `INSERT INTO sites (user_id, name, domain, site_key) VALUES ($1,'A3','an3.example','ak3') ON CONFLICT (site_key) DO UPDATE SET name='A3' RETURNING id::text`, uid).Scan(&sid))
+	seedSessionData(t, db, sid)
+
+	out, err := Q.Overview(ctx, db, uid, sid, "24h", "", "", Filters{})
+	if err != nil {
+		t.Fatalf("Overview: %v", err)
+	}
+	if out.Pageviews < 4 || out.Sessions < 2 {
+		t.Fatalf("current window incomplete: %+v", out)
+	}
+	if out.PrevPageviews < 0 || out.PrevSessions < 0 || out.PrevBounces < 0 {
+		t.Fatalf("prev-window counters must never be negative: %+v", out)
+	}
+}
+
+// Verifies F4: root overview ranks sites by pageviews with prev values.
+func TestRootOverviewRanking(t *testing.T) {
+	db := testPool(t)
+	ctx := context.Background()
+	var uid, sid string
+	must(t, db.QueryRow(ctx, `INSERT INTO users (email, password_hash, name) VALUES ('zq9@test.dev','x','R1') ON CONFLICT (email) DO UPDATE SET name='R1' RETURNING id::text`).Scan(&uid))
+	must(t, db.QueryRow(ctx, `INSERT INTO sites (user_id, name, domain, site_key) VALUES ($1,'R1','zq9.example','zq9') ON CONFLICT (site_key) DO UPDATE SET name='R1' RETURNING id::text`, uid).Scan(&sid))
+	seedSessionData(t, db, sid)
+
+	out, err := Q.RootOverview(ctx, db, uid, "7d", "", "")
+	if err != nil {
+		t.Fatalf("RootOverview: %v", err)
+	}
+	if len(out.Series) == 0 {
+		t.Fatalf("expected series for owned site")
+	}
+	desc := true
+	for i := 1; i < len(out.Ranking); i++ {
+		if out.Ranking[i-1].Pageviews < out.Ranking[i].Pageviews {
+			desc = false
+		}
+	}
+	if !desc {
+		t.Fatalf("ranking not sorted by pageviews desc: %+v", out.Ranking)
+	}
+	for _, r := range out.Ranking {
+		if r.PrevPageviews < 0 {
+			t.Fatalf("negative prev pageviews: %+v", r)
+		}
 	}
 }

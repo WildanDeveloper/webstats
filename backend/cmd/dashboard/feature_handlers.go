@@ -420,8 +420,10 @@ func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteNa
 	if err != nil {
 		return b, err
 	}
-	pages, _ := analytics.Q.Top(ctx, pool, ownerID(ctx, pool, siteID), siteID, period, "path", 5, "", "", analytics.Filters{})
-	refs, _ := analytics.Q.Top(ctx, pool, ownerID(ctx, pool, siteID), siteID, period, "referrer", 5, "", "", analytics.Filters{})
+	owner := ownerID(ctx, pool, siteID)
+	pages, _ := analytics.Q.Top(ctx, pool, owner, siteID, period, "path", 5, "", "", analytics.Filters{})
+	refs, _ := analytics.Q.Top(ctx, pool, owner, siteID, period, "referrer", 5, "", "", analytics.Filters{})
+	goals, _ := analytics.Q.GoalSummaries(ctx, pool, owner, siteID, period, "", "", analytics.Filters{})
 	out.Pageviews = ov.Pageviews
 	out.Visitors = ov.Visitors
 	out.Sessions = ov.Sessions
@@ -435,9 +437,30 @@ func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteNa
 	add := func(k, v string) {
 		rows += fmt.Sprintf(`<tr><td style="padding:6px 14px;color:#6b7280;font-size:13px">%s</td><td style="padding:6px 14px;color:#111827;font-size:13px;font-weight:600;text-align:right">%s</td></tr>`, k, v)
 	}
-	add("Pageviews", fmt.Sprint(out.Pageviews))
-	add("Visitors", fmt.Sprint(out.Visitors))
-	add("Sessions", fmt.Sprint(out.Sessions))
+	// A16: delta vs the previous window of the same length, shown inline.
+	delta := func(cur, prev int64) string {
+		v := fmt.Sprint(cur)
+		if prev > 0 {
+			pct := float64(cur-prev) / float64(prev) * 100
+			sign := "+"
+			if pct < 0 {
+				sign = ""
+			}
+			v += fmt.Sprintf(` <span style="color:%s;font-size:11px">%s%.0f%%</span>`, map[bool]string{pct >= 0: "#059669", false: "#dc2626"}[pct >= 0], sign, pct)
+		}
+		return v
+	}
+	add("Pageviews", delta(out.Pageviews, ov.PrevPageviews))
+	add("Visitors", delta(out.Visitors, ov.PrevVisitors))
+	add("Sessions", delta(out.Sessions, ov.PrevSessions))
+	// D6: conversions + custom events in the same digest.
+	goalRows := ""
+	for _, g := range goals {
+		goalRows += `<tr><td style="padding:4px 14px;color:#111827;font-size:13px">` + template.HTMLEscapeString(g.Name) + `</td><td style="padding:4px 14px;color:#6b7280;font-size:13px;text-align:right">` + fmt.Sprint(g.Conversions) + ` (` + fmt.Sprintf("%.1f", g.ConversionPct) + `%)</td></tr>`
+	}
+	if goalRows == "" {
+		goalRows = `<tr><td colspan="2" style="padding:4px 14px;color:#9ca3af;font-size:13px">No goals defined</td></tr>`
+	}
 	topPages := ""
 	for _, p := range pages {
 		topPages += `<tr><td style="padding:4px 14px;color:#111827;font-size:13px">` + template.HTMLEscapeString(p.Key) + `</td><td style="padding:4px 14px;color:#6b7280;font-size:13px;text-align:right">` + fmt.Sprint(p.Value) + `</td></tr>`
@@ -458,6 +481,8 @@ func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteNa
 <table style="width:100%;border-collapse:collapse">` + topPages + `</table>
 <h3 style="font-size:13px;color:#111827;margin:18px 0 6px">Top referrers</h3>
 <table style="width:100%;border-collapse:collapse">` + topRefs + `</table>
+<h3 style="font-size:13px;color:#111827;margin:18px 0 6px">Goal conversions</h3>
+<table style="width:100%;border-collapse:collapse">` + goalRows + `</table>
 </div>
 <div style="padding:12px 24px;color:#9ca3af;font-size:12px">Sent by WebStats` + unsubHTML + `</div>
 </div>`

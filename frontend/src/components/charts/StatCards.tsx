@@ -16,10 +16,11 @@ function delta(current: number, previous: number) {
   return ((current - previous) / previous) * 100;
 }
 
-function Delta({ d }: { d: number | null }) {
+function Delta({ d, invert }: { d: number | null; invert?: boolean }) {
   if (d === null) return null;
   const up = d >= 0;
-  const color = up ? "text-emerald-500" : "text-red-400";
+  const good = invert ? !up : up;
+  const color = good ? "text-emerald-500" : "text-red-400";
   return (
     <span className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${color}`}>
       {up ? <IconArrowUp className="h-3 w-3" /> : <IconArrowDown className="h-3 w-3" />}
@@ -32,16 +33,20 @@ export default function StatCards({
   pageviews,
   visitors,
   bounceRate,
-  avgPerDay,
   prevPageviews,
   prevVisitors,
+  prevBounceRate,
+  prevSessions,
+  sessions,
 }: {
   pageviews: number;
   visitors: number;
   bounceRate: number;
-  avgPerDay: number;
   prevPageviews: number;
   prevVisitors: number;
+  prevBounceRate?: number;
+  prevSessions?: number;
+  sessions?: number;
 }) {
   const cards = [
     {
@@ -63,14 +68,18 @@ export default function StatCards({
       value: bounceRate.toFixed(1) + "%",
       icon: IconPercent,
       tint: "text-amber-500 bg-amber-500/10",
-      delta: null,
+      delta:
+        prevBounceRate !== undefined && prevBounceRate > 0
+          ? ((bounceRate - prevBounceRate) / prevBounceRate) * 100
+          : null,
+      invert: true,
     },
     {
-      label: "Average per day",
-      value: avgPerDay.toFixed(1),
+      label: "Sessions",
+      value: fmt.format(sessions ?? 0),
       icon: IconCalendar,
       tint: "text-sky-500 bg-sky-500/10",
-      delta: null,
+      delta: delta(sessions ?? 0, prevSessions ?? 0),
     },
   ];
 
@@ -85,7 +94,7 @@ export default function StatCards({
             {c.value}
           </p>
           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-faint">
-            {c.delta !== null && <Delta d={c.delta} />}
+            {c.delta !== null && <Delta d={c.delta} invert={c.invert} />}
             {c.label}
           </p>
         </div>

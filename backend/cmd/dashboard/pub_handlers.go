@@ -249,6 +249,22 @@ func publicInsightsHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func publicVitalsHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		siteID, owner, err := withPublicSite(db)(c)
+		if err != nil {
+			return errJSON(c, 404, "dashboard not found")
+		}
+		_ = owner
+		out, err := analytics.Q.Vitals(c.Context(), db, owner, siteID,
+			c.Query("period", "7d"), c.Query("from"), c.Query("to"))
+		if err != nil {
+			return errJSON(c, 500, "query failed")
+		}
+		return c.JSON(out)
+	}
+}
+
 func publicStatusHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		siteID, owner, err := withPublicSite(db)(c)
@@ -286,7 +302,22 @@ func publicStatusHandler(db *pgxpool.Pool) fiber.Handler {
 		if len(ids) > 0 {
 			attachMonitorDays(c.Context(), db, out, ids)
 		}
-		return c.JSON(fiber.Map{"site": info, "monitors": out})
+		// Incident history for the status page (last 90 days, newest first).
+		incs := []model.Incident{}
+		if irows, ierr := db.Query(c.Context(), `
+			SELECT id, site_id, monitor_id, kind, started_at, resolved_at, reason
+			FROM incidents
+			WHERE site_id = $1 AND started_at >= now() - interval '90 days'
+			ORDER BY started_at DESC LIMIT 50`, siteID); ierr == nil {
+			for irows.Next() {
+				var i model.Incident
+				if irows.Scan(&i.ID, &i.SiteID, &i.MonitorID, &i.Kind, &i.StartedAt, &i.ResolvedAt, &i.Reason) == nil {
+					incs = append(incs, i)
+				}
+			}
+			irows.Close()
+		}
+		return c.JSON(fiber.Map{"site": info, "monitors": out, "incidents": incs})
 	}
 }
 

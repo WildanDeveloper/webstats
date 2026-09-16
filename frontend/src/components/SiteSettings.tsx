@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/auth";
-import type { FunnelConfig, Invite, Member, Monitor, MonitorCheck, Site, SiteSettings as SiteSettingsT, SslResult } from "@/lib/types";
+import type { FunnelConfig, Heartbeat, Incident, Invite, MaintenanceWindow, Member, Monitor, MonitorCheck, Site, SiteSettings as SiteSettingsT, SslResult } from "@/lib/types";
 import {
   IconArrowLeft,
   IconCheck,
@@ -45,6 +45,9 @@ export default function SiteSettings({
   initialSettings = null,
   initialFunnels = [],
   initialMonitors = [],
+  initialHeartbeats = [],
+  initialMaintenance = [],
+  initialIncidents = [],
 }: {
   site: Site | null;
   token: string;
@@ -54,6 +57,9 @@ export default function SiteSettings({
   initialSettings?: SiteSettingsT | null;
   initialFunnels?: FunnelConfig[];
   initialMonitors?: Monitor[];
+  initialHeartbeats?: Heartbeat[];
+  initialMaintenance?: MaintenanceWindow[];
+  initialIncidents?: Incident[];
 }) {
   const [name, setName] = useState(site?.name || "");
   const [domain, setDomain] = useState(site?.domain || "");
@@ -88,6 +94,21 @@ export default function SiteSettings({
   const [monKeywordMode, setMonKeywordMode] = useState("present");
   const [monMsg, setMonMsg] = useState("");
   const [checks, setChecks] = useState<Record<string, MonitorCheck[]>>({});
+
+  const [heartbeats, setHeartbeats] = useState<Heartbeat[]>(initialHeartbeats);
+  const [hbName, setHbName] = useState("");
+  const [hbPeriod, setHbPeriod] = useState(3600);
+  const [hbGrace, setHbGrace] = useState(600);
+  const [hbMsg, setHbMsg] = useState("");
+  const [hbCopied, setHbCopied] = useState("");
+
+  const [maintenance, setMaintenance] = useState<MaintenanceWindow[]>(initialMaintenance);
+  const [mwDays, setMwDays] = useState<string[]>(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+  const [mwStart, setMwStart] = useState(120);
+  const [mwEnd, setMwEnd] = useState(240);
+  const [mwMsg, setMwMsg] = useState("");
+
+  const [incidents] = useState<Incident[]>(initialIncidents);
 
   const [publicEnabled, setPublicEnabled] = useState(
     initialSettings?.public_enabled ?? false,
@@ -285,6 +306,84 @@ export default function SiteSettings({
       setChecks((prev) => ({ ...prev, [m.id]: res }));
     } catch {
       setChecks((prev) => ({ ...prev, [m.id]: [] }));
+    }
+  }
+
+  async function addHeartbeat(e: React.FormEvent) {
+    e.preventDefault();
+    if (!site) return;
+    setHbMsg("");
+    try {
+      await apiFetch(`/api/sites/${site.id}/heartbeats`, token, {
+        method: "POST",
+        body: JSON.stringify({
+          name: hbName,
+          period_seconds: hbPeriod,
+          grace_seconds: hbGrace,
+        }),
+      });
+      setHbName("");
+      const res = await apiFetch<Heartbeat[]>(`/api/sites/${site.id}/heartbeats`, token);
+      setHeartbeats(res);
+    } catch (err: any) {
+      setHbMsg(err.message);
+    }
+  }
+
+  async function deleteHeartbeat(h: Heartbeat) {
+    if (!site) return;
+    if (!confirm(`Delete heartbeat "${h.name}"?`)) return;
+    setHbMsg("");
+    try {
+      await apiFetch(`/api/sites/${site.id}/heartbeats/${h.id}`, token, { method: "DELETE" });
+      setHeartbeats((prev) => prev.filter((x) => x.id !== h.id));
+    } catch (err: any) {
+      setHbMsg(err.message);
+    }
+  }
+
+  function copyPing(h: Heartbeat) {
+    if (h.ping_url) {
+      navigator.clipboard.writeText(h.ping_url);
+      setHbCopied(h.id);
+      setTimeout(() => setHbCopied(""), 1500);
+    }
+  }
+
+  const DAY_LABELS: [string, string][] = [
+    ["mon", "Mon"], ["tue", "Tue"], ["wed", "Wed"], ["thu", "Thu"],
+    ["fri", "Fri"], ["sat", "Sat"], ["sun", "Sun"],
+  ];
+
+  function fmtMinute(m: number) {
+    return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  }
+
+  async function addMaintenance(e: React.FormEvent) {
+    e.preventDefault();
+    if (!site) return;
+    setMwMsg("");
+    try {
+      await apiFetch(`/api/sites/${site.id}/maintenance`, token, {
+        method: "POST",
+        body: JSON.stringify({ days: mwDays, start_minute: mwStart, end_minute: mwEnd }),
+      });
+      const res = await apiFetch<MaintenanceWindow[]>(`/api/sites/${site.id}/maintenance`, token);
+      setMaintenance(res);
+      setMwMsg("Maintenance window added");
+    } catch (err: any) {
+      setMwMsg(err.message);
+    }
+  }
+
+  async function deleteMaintenance(w: MaintenanceWindow) {
+    if (!site) return;
+    setMwMsg("");
+    try {
+      await apiFetch(`/api/sites/${site.id}/maintenance/${w.id}`, token, { method: "DELETE" });
+      setMaintenance((prev) => prev.filter((x) => x.id !== w.id));
+    } catch (err: any) {
+      setMwMsg(err.message);
     }
   }
 
@@ -904,6 +1003,220 @@ export default function SiteSettings({
           ))}
         </div>
       </section>
+
+      <section className="rounded-xl border border-edge bg-card p-6">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <IconPulse className="h-4 w-4 text-indigo-500" />
+          Heartbeats (dead man's switch)
+        </h2>
+        <p className="mt-0.5 text-xs text-faint">
+          Ping a heartbeat URL from cron jobs, workers or backups. If a beat goes silent for period + grace, a
+          &quot;heartbeat missed&quot; alert rule can notify you.
+        </p>
+        <form onSubmit={addHeartbeat} className="mt-4 flex flex-wrap items-center gap-2">
+          <input
+            value={hbName}
+            onChange={(e) => setHbName(e.target.value)}
+            placeholder="Name (e.g. nightly backup)"
+            required
+            className="min-w-48 flex-1 rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink placeholder-faint outline-none focus:border-indigo-500"
+          />
+          <select
+            value={hbPeriod}
+            onChange={(e) => setHbPeriod(parseInt(e.target.value, 10))}
+            title="Expected period"
+            className="rounded-lg border border-edge bg-bg px-2 py-2 text-sm text-ink outline-none focus:border-indigo-500"
+          >
+            <option value={60}>Every 1 min</option>
+            <option value={300}>Every 5 min</option>
+            <option value={900}>Every 15 min</option>
+            <option value={3600}>Every hour</option>
+            <option value={86400}>Every day</option>
+          </select>
+          <select
+            value={hbGrace}
+            onChange={(e) => setHbGrace(parseInt(e.target.value, 10))}
+            title="Grace period"
+            className="rounded-lg border border-edge bg-bg px-2 py-2 text-sm text-ink outline-none focus:border-indigo-500"
+          >
+            <option value={60}>+1 min grace</option>
+            <option value={300}>+5 min grace</option>
+            <option value={900}>+15 min grace</option>
+            <option value={3600}>+1 h grace</option>
+          </select>
+          <button
+            type="submit"
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+          >
+            <IconPlus className="h-4 w-4" /> Add
+          </button>
+        </form>
+        {hbMsg && <p className="mt-3 text-sm text-red-400">{hbMsg}</p>}
+        <div className="mt-4 space-y-2">
+          {heartbeats.length === 0 && <p className="text-xs text-faint">No heartbeats yet.</p>}
+          {heartbeats.map((h) => (
+            <div key={h.id} className="rounded-lg border border-edge/60 px-3 py-2.5">
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-ink">{h.name}</p>
+                  <p className="text-xs text-faint">
+                    every {h.period_seconds < 3600 ? `${h.period_seconds / 60} min` : h.period_seconds === 3600 ? "1 h" : `${h.period_seconds / 3600} h`}
+                    {" · "}
+                    {h.last_ping_at
+                      ? `last ping ${new Date(h.last_ping_at).toLocaleString()}`
+                      : "no ping yet"}
+                  </p>
+                </div>
+                <span
+                  className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${
+                    h.status === "up"
+                      ? "bg-emerald-500/10 text-emerald-500"
+                      : h.status === "late"
+                        ? "bg-red-500/10 text-red-500"
+                        : "bg-raised text-faint"
+                  }`}
+                >
+                  {h.status}
+                </span>
+                <button
+                  onClick={() => copyPing(h)}
+                  className="rounded-md border border-edge px-2 py-1 text-xs text-soft transition-colors hover:bg-raised"
+                  title={h.ping_url || ""}
+                >
+                  {hbCopied === h.id ? "Copied" : "Copy ping URL"}
+                </button>
+                <button
+                  onClick={() => deleteHeartbeat(h)}
+                  className="rounded-lg p-2 text-faint transition-colors hover:bg-raised hover:text-red-500"
+                  title="Delete heartbeat"
+                >
+                  <IconTrash className="h-4 w-4" />
+                </button>
+              </div>
+              <code className="mt-2 block truncate rounded-md border border-edge bg-raised px-2.5 py-1.5 font-mono text-[11px] text-faint" title="curl example">
+                curl {h.ping_url || "…"}
+              </code>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-edge bg-card p-6">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <IconShield className="h-4 w-4 text-indigo-500" />
+          Maintenance windows
+        </h2>
+        <p className="mt-0.5 text-xs text-faint">
+          Suppress down/up and heartbeat alerts during planned work (UTC times).
+        </p>
+        <form onSubmit={addMaintenance} className="mt-4 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {DAY_LABELS.map(([d, label]) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() =>
+                  setMwDays((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]))
+                }
+                className={`rounded-md px-2.5 py-1.5 text-xs transition-colors ${
+                  mwDays.includes(d)
+                    ? "bg-indigo-600 text-white"
+                    : "bg-raised text-faint hover:text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="time"
+              value={fmtMinute(mwStart)}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(":").map((x) => parseInt(x, 10) || 0);
+                setMwStart(h * 60 + m);
+              }}
+              className="rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-indigo-500"
+            />
+            <span className="text-xs text-faint">to</span>
+            <input
+              type="time"
+              value={fmtMinute(mwEnd)}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(":").map((x) => parseInt(x, 10) || 0);
+                setMwEnd(h * 60 + m);
+              }}
+              className="rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-indigo-500"
+            />
+            <button
+              type="submit"
+              disabled={mwDays.length === 0}
+              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+            >
+              <IconPlus className="h-4 w-4" /> Add window
+            </button>
+          </div>
+        </form>
+        {mwMsg && <p className="mt-3 text-sm text-emerald-500">{mwMsg}</p>}
+        <div className="mt-4 space-y-2">
+          {maintenance.length === 0 && <p className="text-xs text-faint">No maintenance windows yet.</p>}
+          {maintenance.map((w) => (
+            <div key={w.id} className="flex items-center gap-3 rounded-lg border border-edge/60 px-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-ink">
+                  {fmtMinute(w.start_minute)} – {fmtMinute(w.end_minute)} UTC
+                </p>
+                <p className="text-xs text-faint">
+                  {(w.days || []).map((d) => d.charAt(0).toUpperCase() + d.slice(1)).join(", ")}
+                </p>
+              </div>
+              <button
+                onClick={() => deleteMaintenance(w)}
+                className="rounded-lg p-2 text-faint transition-colors hover:bg-raised hover:text-red-500"
+                title="Delete window"
+              >
+                <IconTrash className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {incidents.length > 0 && (
+        <section className="rounded-xl border border-edge bg-card p-6">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+            <IconPulse className="h-4 w-4 text-indigo-500" />
+            Incident history
+          </h2>
+          <p className="mt-0.5 text-xs text-faint">
+            Uptime outages recorded by the alert loop. Also shown on the public status page.
+          </p>
+          <div className="mt-4 space-y-2">
+            {incidents.map((i) => (
+              <div key={i.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-edge/60 px-3 py-2.5">
+                <span
+                  className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${
+                    i.resolved_at ? "bg-raised text-faint" : "bg-red-500/10 text-red-500"
+                  }`}
+                >
+                  {i.resolved_at ? "resolved" : "ongoing"}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-ink">
+                    {new Date(i.started_at).toLocaleString()}
+                    {i.resolved_at && ` → ${new Date(i.resolved_at).toLocaleString()}`}
+                  </p>
+                  <p className="text-xs text-faint">
+                    {i.kind === "monitor" ? "monitor check" : "site"}
+                    {i.resolved_at &&
+                      ` · ${Math.max(1, Math.round((new Date(i.resolved_at).getTime() - new Date(i.started_at).getTime()) / 60000))} min`}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sort"
 	"sync"
 	"time"
 
@@ -247,14 +248,22 @@ func (q *Queries) Overview(ctx context.Context, db *pgxpool.Pool, userID, siteID
 			FROM pageviews
 			WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3`+cond+`
 			GROUP BY session_id
+		), sprev AS (
+			SELECT session_id, count(*) AS c
+			FROM pageviews
+			WHERE site_id = $1 AND visited_at >= $4 AND visited_at < $2`+cond+`
+			GROUP BY session_id
 		)
 		SELECT
 			(SELECT count(*) FROM pageviews WHERE site_id = $1 AND visited_at >= $2 AND visited_at < $3`+cond+`),
 			(SELECT count(*) FROM s),
 			(SELECT count(*) FROM s WHERE c = 1),
 			(SELECT count(*) FROM pageviews WHERE site_id = $1 AND visited_at >= $4 AND visited_at < $2`+cond+`),
-			(SELECT count(DISTINCT session_id) FROM pageviews WHERE site_id = $1 AND visited_at >= $4 AND visited_at < $2`+cond+`)`,
-		args...).Scan(&out.Pageviews, &out.Sessions, &out.Bounces, &out.PrevPageviews, &out.PrevVisitors)
+			(SELECT count(DISTINCT session_id) FROM pageviews WHERE site_id = $1 AND visited_at >= $4 AND visited_at < $2`+cond+`),
+			(SELECT count(*) FROM sprev),
+			(SELECT count(*) FROM sprev WHERE c = 1)`,
+		args...).Scan(&out.Pageviews, &out.Sessions, &out.Bounces, &out.PrevPageviews, &out.PrevVisitors,
+		&out.PrevSessions, &out.PrevBounces)
 	if err != nil {
 		return out, err
 	}
@@ -571,6 +580,7 @@ type RootOverview struct {
 	Sites     int64        `json:"sites"`
 	Events    int64        `json:"events"`
 	Series    []SiteSeries `json:"series"`
+	Ranking   []model.SiteRank `json:"ranking"`
 }
 
 func (q *Queries) Realtime(ctx context.Context, db *pgxpool.Pool, userID, siteID string) (model.Realtime, error) {
@@ -969,6 +979,70 @@ func (q *Queries) RootOverview(ctx context.Context, db *pgxpool.Pool, userID, pe
 	if out.Series == nil {
 		out.Series = []SiteSeries{}
 	}
+
+	// Per-site ranking for the period with previous-period pageviews so the
+	// home page can show movement at a glance.
+	rows, err = db.Query(ctx, `
+		SELECT s.id, s.name, s.color, count(p.id), count(DISTINCT p.session_id)
+		FROM sites s
+		LEFT JOIN pageviews p ON p.site_id = s.id AND p.visited_at >= $1 AND p.visited_at < $2
+		WHERE s.user_id = $3 OR s.id IN (SELECT site_id FROM site_members WHERE user_id = $3)
+		GROUP BY s.id, s.name, s.color`, from, to, userID)
+	if err != nil {
+		return out, nil
+	}
+	defer rows.Close()
+	totals := map[string][2]int64{}
+	ids := []string{}
+	meta := map[string][2]string{}
+	for rows.Next() {
+		var id, name, color string
+		var n, v int64
+		if rows.Scan(&id, &name, &color, &n, &v) != nil {
+			continue
+		}
+		ids = append(ids, id)
+		totals[id] = [2]int64{n, v}
+		meta[id] = [2]string{name, color}
+	}
+	rows.Close()
+	if len(ids) > 0 {
+		prevFrom := from.Add(-to.Sub(from))
+		rows, err = db.Query(ctx, `
+			SELECT p.site_id, count(*)
+			FROM pageviews p
+			WHERE p.site_id = ANY($1::uuid[]) AND p.visited_at >= $2 AND p.visited_at < $3
+			GROUP BY 1`, ids, prevFrom, from)
+		if err == nil {
+			defer rows.Close()
+			prevTotals := map[string]int64{}
+			for rows.Next() {
+				var id string
+				var n int64
+				if rows.Scan(&id, &n) == nil {
+					prevTotals[id] = n
+				}
+			}
+			rows.Close()
+			for _, id := range ids {
+				t := totals[id]
+				m := meta[id]
+				out.Ranking = append(out.Ranking, model.SiteRank{
+					SiteID: id, Name: m[0], Color: m[1],
+					Pageviews: t[0], Visitors: t[1], PrevPageviews: prevTotals[id],
+				})
+			}
+			sort.Slice(out.Ranking, func(i, j int) bool {
+				if out.Ranking[i].Pageviews != out.Ranking[j].Pageviews {
+					return out.Ranking[i].Pageviews > out.Ranking[j].Pageviews
+				}
+				return out.Ranking[i].Name < out.Ranking[j].Name
+			})
+		}
+	}
+	if out.Ranking == nil {
+		out.Ranking = []model.SiteRank{}
+	}
 	return out, nil
 }
 
@@ -1228,8 +1302,7 @@ func (q *Queries) EventDetails(ctx context.Context, db *pgxpool.Pool, userID, si
 	return out, rows.Err()
 }
 
-func (q *Queries) EventOccurrences(ctx context.Context, db *pgxpool.Pool, userID, siteID, name, period, fromStr, toStr string, limit int) ([]model.EventOccurrence, error) {
-	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
+func (q *Queries) EventOccurrences(ctx context.Context, db *pgxpool.Pool, userID, siteID, name, period, fromStr, toStr string, limit int) ([]model.EventOccurrence, error) {	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, pgx.ErrNoRows
@@ -1253,6 +1326,93 @@ func (q *Queries) EventOccurrences(ctx context.Context, db *pgxpool.Pool, userID
 			return nil, err
 		}
 		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// ---------- A3: Web Vitals ----------
+// Vitals aggregate the web_vitals events (props: metric, value) emitted by
+// the tracker: p75 per metric, per-path breakdown and a daily trend.
+
+func vitalsExpr(metric string) string {
+	return fmt.Sprintf(`COALESCE(percentile_cont(0.75) WITHIN GROUP (ORDER BY (props->>'value')::float) FILTER (WHERE props->>'metric' = '%s'), 0)`, metric)
+}
+
+func (q *Queries) Vitals(ctx context.Context, db *pgxpool.Pool, userID, siteID, period, fromStr, toStr string) (model.Vitals, error) {
+	var out model.Vitals
+	if ok, err := siteAccess(ctx, db, userID, siteID, ""); err != nil {
+		return out, err
+	} else if !ok {
+		return out, pgx.ErrNoRows
+	}
+	from, to, _ := PeriodBounds(period, fromStr, toStr)
+	from = clampFrom(ctx, db, siteID, from, to)
+
+	rows, err := db.Query(ctx, `
+		SELECT props->>'metric',
+		       percentile_cont(0.75) WITHIN GROUP (ORDER BY (props->>'value')::float),
+		       count(*)
+		FROM events
+		WHERE site_id = $1 AND name = 'web_vitals' AND created_at >= $2 AND created_at < $3
+		GROUP BY 1 ORDER BY 1`, siteID, from, to)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	out.Summary = make([]model.VitalStat, 0)
+	for rows.Next() {
+		var s model.VitalStat
+		if err := rows.Scan(&s.Metric, &s.P75, &s.Samples); err != nil {
+			return out, err
+		}
+		out.Summary = append(out.Summary, s)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	rows, err = db.Query(ctx, `
+		SELECT COALESCE(NULLIF(url, ''), '/') AS path, count(*),
+		       `+vitalsExpr("lcp")+`, `+vitalsExpr("cls")+`, `+vitalsExpr("inp")+`
+		FROM events
+		WHERE site_id = $1 AND name = 'web_vitals' AND created_at >= $2 AND created_at < $3
+		GROUP BY 1 ORDER BY count(*) DESC LIMIT 10`, siteID, from, to)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	out.Paths = make([]model.VitalPathRow, 0)
+	for rows.Next() {
+		var p model.VitalPathRow
+		if err := rows.Scan(&p.Path, &p.N, &p.LCP, &p.CLS, &p.INP); err != nil {
+			return out, err
+		}
+		out.Paths = append(out.Paths, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	rows, err = db.Query(ctx, `
+		SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), count(*),
+		       `+vitalsExpr("lcp")+`, `+vitalsExpr("cls")+`, `+vitalsExpr("inp")+`
+		FROM events
+		WHERE site_id = $1 AND name = 'web_vitals' AND created_at >= $2 AND created_at < $3
+		GROUP BY 1 ORDER BY 1`, siteID, from, to)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	out.Trend = make([]model.VitalTrendPoint, 0)
+	for rows.Next() {
+		var t model.VitalTrendPoint
+		var n int64
+		if err := rows.Scan(&t.Date, &n, &t.LCP, &t.CLS, &t.INP); err != nil {
+			return out, err
+		}
+		out.Trend = append(out.Trend, t)
 	}
 	return out, rows.Err()
 }

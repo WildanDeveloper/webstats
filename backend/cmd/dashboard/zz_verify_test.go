@@ -317,3 +317,84 @@ func TestConcurrentMapTypes(t *testing.T) {
 		t.Fatal("concurrent writes lost")
 	}
 }
+
+// Verifies C4: maintenance windows suppress alerts inside (and only inside)
+// the configured window, including midnight-wrapping ranges.
+func TestInMaintenance(t *testing.T) {
+	db := testPool(t)
+	ctx := context.Background()
+	var uid, sid string
+	must(t, db.QueryRow(ctx, `INSERT INTO users (email, password_hash, name) VALUES ('mw1@test.dev','x','MW1') ON CONFLICT (email) DO UPDATE SET name='MW1' RETURNING id::text`).Scan(&uid))
+	must(t, db.QueryRow(ctx, `INSERT INTO sites (user_id, name, domain, site_key) VALUES ($1,'MW1','mw1.example','mw1') ON CONFLICT (site_key) DO UPDATE SET name='MW1' RETURNING id::text`, uid).Scan(&sid))
+	// Shared test DB: clear state from previous runs of this test.
+	_, err := db.Exec(ctx, `DELETE FROM maintenance_windows WHERE site_id = $1`, sid)
+	must(t, err)
+
+	if inMaintenance(ctx, db, sid, time.Now().UTC()) {
+		t.Fatal("site without windows must never be in maintenance")
+	}
+
+	// Window 02:00-04:00 UTC every day.
+	_, err = db.Exec(ctx, `INSERT INTO maintenance_windows (site_id, days_csv, start_minute, end_minute) VALUES ($1, 'mon,tue,wed,thu,fri,sat,sun', 120, 240)`, sid)
+	must(t, err)
+
+	mon := time.Date(2026, 3, 2, 3, 0, 0, 0, time.UTC) // 03:00 Monday, inside
+	if !inMaintenance(ctx, db, sid, mon) {
+		t.Fatal("03:00 must be inside the 02:00-04:00 window")
+	}
+	monOutside := time.Date(2026, 3, 2, 5, 0, 0, 0, time.UTC) // 05:00, outside
+	if inMaintenance(ctx, db, sid, monOutside) {
+		t.Fatal("05:00 must be outside the window")
+	}
+
+	// Wrapping window 23:00-04:00: 01:00 (next day) is inside.
+	_, err = db.Exec(ctx, `DELETE FROM maintenance_windows WHERE site_id = $1`, sid)
+	must(t, err)
+	_, err = db.Exec(ctx, `INSERT INTO maintenance_windows (site_id, days_csv, start_minute, end_minute) VALUES ($1, 'sun,mon,tue,wed,thu,fri,sat', 1380, 240)`, sid)
+	must(t, err)
+	early := time.Date(2026, 3, 2, 1, 0, 0, 0, time.UTC)
+	if !inMaintenance(ctx, db, sid, early) {
+		t.Fatal("01:00 must be inside the wrapping 23:00-04:00 window")
+	}
+}
+
+// Verifies C6: down opens one incident, repeated downs do not duplicate it,
+// up resolves it and a new down opens a fresh one.
+func TestIncidentTransitions(t *testing.T) {
+	db := testPool(t)
+	ctx := context.Background()
+	var uid, sid string
+	must(t, db.QueryRow(ctx, `INSERT INTO users (email, password_hash, name) VALUES ('inc1@test.dev','x','IN1') ON CONFLICT (email) DO UPDATE SET name='IN1' RETURNING id::text`).Scan(&uid))
+	must(t, db.QueryRow(ctx, `INSERT INTO sites (user_id, name, domain, site_key) VALUES ($1,'IN1','inc1.example','in1') ON CONFLICT (site_key) DO UPDATE SET name='IN1' RETURNING id::text`, uid).Scan(&sid))
+	// Shared test DB: clear state from previous runs of this test.
+	_, err := db.Exec(ctx, `DELETE FROM incidents WHERE site_id = $1`, sid)
+	must(t, err)
+
+	var open int
+	countOpen := func() int {
+		must(t, db.QueryRow(ctx, `SELECT count(*) FROM incidents WHERE site_id = $1 AND resolved_at IS NULL`, sid).Scan(&open))
+		return open
+	}
+
+	trackSiteIncident(ctx, db, sid, "site_down")
+	if countOpen() != 1 {
+		t.Fatal("first down must open exactly one incident")
+	}
+	trackSiteIncident(ctx, db, sid, "site_down")
+	if countOpen() != 1 {
+		t.Fatal("repeated down must not duplicate the incident")
+	}
+	trackSiteIncident(ctx, db, sid, "site_up")
+	if countOpen() != 0 {
+		t.Fatal("up must resolve the open incident")
+	}
+	trackSiteIncident(ctx, db, sid, "site_down")
+	if countOpen() != 1 {
+		t.Fatal("a second outage must open a new incident")
+	}
+	var total int
+	must(t, db.QueryRow(ctx, `SELECT count(*) FROM incidents WHERE site_id = $1`, sid).Scan(&total))
+	if total != 2 {
+		t.Fatalf("expected 2 incidents total, got %d", total)
+	}
+}

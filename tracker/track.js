@@ -187,6 +187,8 @@
     var wantOutbound = script.getAttribute('data-outbound') != null;
     var wantDownload = script.getAttribute('data-download') != null;
     var wantScroll = script.getAttribute('data-scroll') != null;
+    var wantVitals = script.getAttribute('data-vitals') != null;
+    if (wantVitals) setupVitals();
     if (!wantOutbound && !wantDownload && !wantScroll) return;
 
     if (wantOutbound || wantDownload) {
@@ -214,6 +216,71 @@
         });
       }, { passive: true });
     }
+  }
+
+  // Web Vitals (opt-in via data-vitals): LCP, CLS, INP, FCP, TTFB are sent
+  // as web_vitals events with { metric, value }. FCP/TTFB are known early;
+  // LCP/CLS/INP are flushed once stable and again on page hide with the
+  // final value (each metric reports once per page).
+  function setupVitals() {
+    if (!window.PerformanceObserver) return;
+    var sent = {};
+    var vals = { lcp: null, cls: 0, inp: 0, fcp: null, ttfb: null };
+    var deb = {};
+    function report(m) {
+      if (sent[m]) return;
+      var v = vals[m];
+      if (v == null) return;
+      sent[m] = 1;
+      if (deb[m]) { clearTimeout(deb[m]); deb[m] = null; }
+      event('web_vitals', { metric: m, value: m === 'cls' ? Math.round(v * 1000) / 1000 : Math.round(v) });
+    }
+    function schedule(m, ms) {
+      if (sent[m]) return;
+      if (deb[m]) clearTimeout(deb[m]);
+      deb[m] = setTimeout(function () { report(m); }, ms || 3000);
+    }
+    try {
+      new PerformanceObserver(function (l) {
+        var es = l.getEntries();
+        for (var i = 0; i < es.length; i++) {
+          if (es[i].name === 'first-contentful-paint') { vals.fcp = es[i].startTime; schedule('fcp', 1000); }
+        }
+      }).observe({ type: 'paint', buffered: true });
+    } catch (e) {}
+    try {
+      new PerformanceObserver(function (l) {
+        var es = l.getEntries();
+        if (es.length) { vals.lcp = es[es.length - 1].startTime; schedule('lcp'); }
+      }).observe({ type: 'largest-contentful-paint', buffered: true });
+    } catch (e) {}
+    try {
+      new PerformanceObserver(function (l) {
+        var es = l.getEntries();
+        for (var i = 0; i < es.length; i++) {
+          if (!es[i].hadRecentInput) { vals.cls += es[i].value; schedule('cls'); }
+        }
+      }).observe({ type: 'layout-shift', buffered: true });
+    } catch (e) {}
+    try {
+      new PerformanceObserver(function (l) {
+        var es = l.getEntries();
+        for (var i = 0; i < es.length; i++) {
+          if (es[i].duration > vals.inp) { vals.inp = es[i].duration; schedule('inp'); }
+        }
+      }).observe({ type: 'event', buffered: true, durationThreshold: 40 });
+    } catch (e) {}
+    try {
+      var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+      if (nav && nav.responseStart) { vals.ttfb = nav.responseStart; schedule('ttfb', 1000); }
+    } catch (e) {}
+    function flushAll() {
+      ['fcp', 'ttfb', 'lcp', 'cls', 'inp'].forEach(report);
+    }
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') flushAll();
+    });
+    window.addEventListener('pagehide', flushAll);
   }
 
   window.webstats = { event: event, pageview: pageview, setOptout: function (v) { try { localStorage.setItem(OPTOUT, v ? '1' : '0'); } catch (e) {} } };

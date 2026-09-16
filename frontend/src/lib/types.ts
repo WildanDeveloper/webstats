@@ -28,6 +28,8 @@ export type Overview = {
   avg_per_day: number;
   prev_pageviews: number;
   prev_visitors: number;
+  prev_sessions: number;
+  prev_bounces: number;
 };
 
 export type TimePoint = {
@@ -111,6 +113,38 @@ export type MonitorCheck = {
   checked_at: string;
 };
 
+export type Heartbeat = {
+  id: string;
+  site_id: string;
+  name: string;
+  period_seconds: number;
+  grace_seconds: number;
+  ping_key: string;
+  ping_url?: string;
+  last_ping_at: string | null;
+  status: string;
+  created_at: string;
+};
+
+export type MaintenanceWindow = {
+  id: string;
+  site_id: string;
+  days: string[];
+  start_minute: number;
+  end_minute: number;
+  created_at: string;
+};
+
+export type Incident = {
+  id: number;
+  site_id: string;
+  monitor_id?: string | null;
+  kind: string;
+  started_at: string;
+  resolved_at: string | null;
+  reason: string;
+};
+
 export type ApiKey = {
   id: string;
   name: string;
@@ -134,6 +168,7 @@ export type Insights = {
 export type PublicStatus = {
   site: { name: string; domain: string; color: string };
   monitors: Monitor[];
+  incidents?: Incident[];
 };
 
 export type Member = {
@@ -170,6 +205,43 @@ export type RootOverview = {
   sites: number;
   events: number;
   series: SiteSeries[];
+  ranking?: SiteRank[];
+};
+
+export type SiteRank = {
+  site_id: string;
+  name: string;
+  color: string;
+  pageviews: number;
+  visitors: number;
+  prev_pageviews: number;
+};
+
+export type VitalStat = {
+  metric: string;
+  p75: number;
+  samples: number;
+};
+
+export type VitalPathRow = {
+  path: string;
+  lcp: number;
+  cls: number;
+  inp: number;
+  n: number;
+};
+
+export type VitalTrendPoint = {
+  date: string;
+  lcp: number;
+  cls: number;
+  inp: number;
+};
+
+export type Vitals = {
+  summary: VitalStat[];
+  paths: VitalPathRow[];
+  trend: VitalTrendPoint[];
 };
 
 export type SslResult = {

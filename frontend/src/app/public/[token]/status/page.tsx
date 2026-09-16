@@ -124,6 +124,50 @@ export default async function PublicStatusPage({
             </div>
           ))}
         </div>
+
+        {(status.incidents?.length || 0) > 0 && (
+          <section className="mt-6 rounded-xl border border-edge bg-card p-6">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <IconPulse className="h-4 w-4 text-indigo-500" />
+              Incident history
+            </h2>
+            <div className="mt-4 space-y-3">
+              {status.incidents!.slice(0, 20).map((i) => (
+                <div key={i.id} className="flex items-start gap-3 border-b border-edge/60 pb-3 last:border-0 last:pb-0">
+                  <span
+                    className={`mt-0.5 rounded-md px-2 py-0.5 text-[11px] font-medium ${
+                      i.resolved_at ? "bg-raised text-faint" : "bg-red-500/10 text-red-500"
+                    }`}
+                  >
+                    {i.resolved_at ? "resolved" : "ongoing"}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-ink">
+                      {new Date(i.started_at).toLocaleString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                      {i.resolved_at &&
+                        ` → ${new Date(i.resolved_at).toLocaleString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}`}
+                    </p>
+                    <p className="text-xs text-faint">
+                      {i.resolved_at
+                        ? `Lasted ${Math.max(1, Math.round((new Date(i.resolved_at).getTime() - new Date(i.started_at).getTime()) / 60000))} minutes`
+                        : "We are investigating this incident"}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

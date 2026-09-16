@@ -10,6 +10,8 @@ import {
   IconGrid,
   IconPulse,
   IconPlus,
+  IconArrowUp,
+  IconArrowDown,
 } from "@/components/icons";
 
 const nf = new Intl.NumberFormat("en-US");
@@ -108,6 +110,52 @@ export default function DashboardView({
         </h2>
         <MultiSiteChart series={overview?.series || []} />
       </section>
+
+      {(overview?.ranking?.length || 0) > 1 && (
+        <section className="rounded-xl border border-edge bg-card p-5">
+          <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-ink">
+            <IconGrid className="h-4 w-4 text-indigo-500" />
+            Ranking (pageviews this period)
+          </h2>
+          <div className="space-y-2">
+            {overview!.ranking!.slice(0, 10).map((r, i) => {
+              const delta =
+                r.prev_pageviews > 0
+                  ? ((r.pageviews - r.prev_pageviews) / r.prev_pageviews) * 100
+                  : null;
+              const max = overview!.ranking![0].pageviews || 1;
+              return (
+                <Link
+                  key={r.site_id}
+                  href={`/sites/${r.site_id}`}
+                  className="group flex items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-raised"
+                >
+                  <span className="w-5 text-right text-xs font-medium text-faint">{i + 1}</span>
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.color || "#6366f1" }} />
+                  <span className="w-40 shrink-0 truncate text-sm text-ink group-hover:text-indigo-400">{r.name}</span>
+                  <span className="hidden h-1.5 flex-1 overflow-hidden rounded-full bg-raised sm:block">
+                    <span
+                      className="block h-full rounded-full bg-indigo-500"
+                      style={{ width: `${(r.pageviews / max) * 100}%` }}
+                    />
+                  </span>
+                  <span className="w-16 text-right text-sm tabular-nums text-ink">{nf.format(r.pageviews)}</span>
+                  <span className="w-14 text-right text-[11px]">
+                    {delta !== null ? (
+                      <span className={`inline-flex items-center gap-0.5 font-medium ${delta >= 0 ? "text-emerald-500" : "text-red-400"}`}>
+                        {delta >= 0 ? <IconArrowUp className="h-3 w-3" /> : <IconArrowDown className="h-3 w-3" />}
+                        {Math.abs(delta).toFixed(0)}%
+                      </span>
+                    ) : (
+                      <span className="text-faint">new</span>
+                    )}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section>
         <div className="mb-3 flex items-center justify-between">

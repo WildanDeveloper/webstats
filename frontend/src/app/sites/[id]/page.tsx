@@ -11,6 +11,7 @@ import type {
   Row,
   Site,
   TimePoint,
+  Vitals,
   WorldPoint,
 } from "@/lib/types";
 import AppShell from "@/components/AppShell";
@@ -75,6 +76,7 @@ export default async function SitePage({
   let goals: GoalSummary[] = [];
   let insights: Insights | null = null;
   let funnelReport: FunnelStep[] = [];
+  let vitals: Vitals | null = null;
   let error = "";
 
   try {
@@ -94,15 +96,17 @@ export default async function SitePage({
         apiFetch<Campaign[]>(`/api/sites/${params.id}/campaigns?${q}`, session.token),
         apiFetch<GoalSummary[]>(`/api/sites/${params.id}/goals/summary?${q}`, session.token),
       ]);
-    const [ins, fr] = await Promise.all([
+    const [ins, fr, vit] = await Promise.all([
       apiFetch<Insights>(`/api/sites/${params.id}/insights?${q}`, session.token).catch(() => null),
       apiFetch<{ steps: string[]; report: { steps: FunnelStep[] } }>(
         `/api/sites/${params.id}/funnel/data?${q}`,
         session.token,
       ).catch(() => null),
+      apiFetch<Vitals>(`/api/sites/${params.id}/vitals?${q}`, session.token).catch(() => null),
     ]);
     insights = ins;
     funnelReport = fr?.report?.steps || [];
+    vitals = vit;
   } catch (e: any) {
     error = e.message || "Failed to load data";
   }
@@ -136,6 +140,7 @@ export default async function SitePage({
           goals={goals}
           insights={insights}
           funnelReport={funnelReport}
+          vitals={vitals}
           error={error}
         />
       </div>

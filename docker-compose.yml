@@ -84,14 +84,13 @@ services:
         condition: service_completed_successfully
 
   web:
-    build: ./frontend
-    container_name: webstats-web
-    profiles: ["full"]
     build:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8086
         NEXT_PUBLIC_TRACKER_URL: http://localhost:8085
+    container_name: webstats-web
+    profiles: ["full"]
     ports:
       - "3000:3000"
     depends_on:

@@ -37,9 +37,11 @@ const (
 	KindPostmark = "postmark"
 	KindBrevo    = "brevo"
 	KindTelegram = "telegram"
+	KindSlack    = "slack"
+	KindDiscord  = "discord"
 )
 
-var ProviderKinds = []string{KindSMTP, KindResend, KindSendgrid, KindMailgun, KindPostmark, KindBrevo, KindTelegram}
+var ProviderKinds = []string{KindSMTP, KindResend, KindSendgrid, KindMailgun, KindPostmark, KindBrevo, KindTelegram, KindSlack, KindDiscord}
 
 func NewSender(kind string, cfg map[string]any, fromEmail string) (Sender, error) {
 	switch kind {
@@ -57,6 +59,10 @@ func NewSender(kind string, cfg map[string]any, fromEmail string) (Sender, error
 		return newBrevo(cfg, fromEmail), nil
 	case KindTelegram:
 		return newTelegram(cfg)
+	case KindSlack:
+		return newSlack(cfg)
+	case KindDiscord:
+		return newDiscord(cfg)
 	}
 	return nil, fmt.Errorf("unknown provider kind: %s", kind)
 }
@@ -77,10 +83,7 @@ type telegramSender struct {
 }
 
 func (t *telegramSender) Send(ctx context.Context, m Message) error {
-	text := m.Text
-	if text == "" {
-		text = htmlToText(m.HTML)
-	}
+	text := messageText(m)
 	body, err := json.Marshal(map[string]any{
 		"chat_id": t.chatID,
 		"text":    text,
@@ -125,6 +128,76 @@ func htmlToText(s string) string {
 	out := b.String()
 	out = strings.Join(strings.Fields(strings.ReplaceAll(out, "&amp;", "&")), " ")
 	return strings.TrimSpace(out)
+}
+
+// messageText renders a Message as chat plain text, used by the Slack and
+// Discord webhook senders.
+func messageText(m Message) string {
+	if m.Text != "" {
+		return m.Text
+	}
+	subject := m.Subject
+	if subject != "" {
+		return subject + "\n" + htmlToText(m.HTML)
+	}
+	return htmlToText(m.HTML)
+}
+
+func webhookSender(cfg map[string]any, name, defaultURL string, build func(text string) ([]byte, error)) (Sender, error) {
+	u, _ := cfg["webhook_url"].(string)
+	if u == "" {
+		u = defaultURL
+	}
+	if !strings.HasPrefix(u, "https://") {
+		return nil, errors.New(name + " requires an https webhook_url")
+	}
+	return &webhookMessageSender{url: u, build: build, name: name}, nil
+}
+
+func newSlack(cfg map[string]any) (Sender, error) {
+	return webhookSender(cfg, "slack", "", func(text string) ([]byte, error) {
+		return json.Marshal(map[string]any{"text": text})
+	})
+}
+
+func newDiscord(cfg map[string]any) (Sender, error) {
+	return webhookSender(cfg, "discord", "", func(text string) ([]byte, error) {
+		if len(text) > 1900 {
+			text = text[:1900] + "…"
+		}
+		return json.Marshal(map[string]any{"content": text})
+	})
+}
+
+// webhookMessageSender posts pre-built JSON to an incoming webhook URL
+// (Slack, Discord, or any compatible chat hook).
+type webhookMessageSender struct {
+	url   string
+	name  string
+	build func(text string) ([]byte, error)
+}
+
+func (w *webhookMessageSender) Send(ctx context.Context, m Message) error {
+	body, err := w.build(messageText(m))
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "webstats/1.0")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("%s send: %w", w.name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("%s status %d: %s", w.name, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
 }
 
 func newSMTP(cfg map[string]any, fromEmail string) (Sender, error) {

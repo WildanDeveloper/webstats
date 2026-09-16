@@ -6,10 +6,13 @@ import (
 )
 
 var EventLabels = map[string]string{
-	"site_down":     "Site is down",
-	"site_up":       "Site is back online",
-	"traffic_spike": "Traffic spike detected",
-	"cert_expiry":   "SSL certificate expiring soon",
+	"site_down":        "Site is down",
+	"site_up":          "Site is back online",
+	"traffic_spike":    "Traffic spike detected",
+	"cert_expiry":      "SSL certificate expiring soon",
+	"heartbeat_missed": "Heartbeat missed",
+	"heartbeat_ok":     "Heartbeat recovered",
+	"vitals_lcp":       "LCP degraded (p75)",
 }
 
 type AlertPayload struct {
@@ -18,10 +21,13 @@ type AlertPayload struct {
 	SiteName  string `json:"site_name"`
 	Domain    string `json:"domain"`
 	Status    string `json:"status"`
+	Name      string `json:"name,omitempty"`
+	Metric    string `json:"metric,omitempty"`
 	LatencyMs int64  `json:"latency_ms,omitempty"`
 	Count     int64  `json:"count,omitempty"`
 	Avg       int64  `json:"avg,omitempty"`
 	Threshold int64  `json:"threshold,omitempty"`
+	Value     int64  `json:"value,omitempty"`
 	Time      string `json:"time"`
 }
 
@@ -37,6 +43,15 @@ func Email(p AlertPayload) string {
 	add("Site", html.EscapeString(p.SiteName))
 	add("Domain", html.EscapeString(p.Domain))
 	add("Status", html.EscapeString(p.Status))
+	if p.Name != "" {
+		add("Name", html.EscapeString(p.Name))
+	}
+	if p.Metric != "" {
+		add("Metric", html.EscapeString(p.Metric))
+	}
+	if p.Value > 0 {
+		add("Value", fmt.Sprintf("%d ms", p.Value))
+	}
 	add("Time", p.Time)
 	if p.LatencyMs > 0 {
 		add("Latency", fmt.Sprintf("%d ms", p.LatencyMs))
