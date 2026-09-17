@@ -1,7 +1,10 @@
 package config
 
 import (
+	"fmt"
+	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,22 +43,30 @@ func getenv(key, def string) string {
 }
 
 func Load() *Config {
+	c, err := LoadChecked()
+	if err != nil {
+		log.Fatalf("configuration: %v", err)
+	}
+	return c
+}
+
+func LoadChecked() (*Config, error) {
 	c := &Config{
-		Port:           getenv("PORT", "8086"),
-		Bind:           os.Getenv("BIND"),
-		DBURL:          getenv("DATABASE_URL", "postgres://webstats:webstats@localhost:5432/webstats"),
-		JWTSecret:      getenv("JWT_SECRET", "webstats-dev-secret-change-me"),
-		RedisURL:       os.Getenv("REDIS_URL"),
-		GeoCSV:         os.Getenv("GEO_CSV"),
-		ASNCSV:         os.Getenv("GEO_ASN_CSV"),
-		IPHashSalt:     getenv("IP_HASH_SALT", "webstats-salt"),
-		BufferSize:     envInt("BUFFER_SIZE", 4096),
-		FlushEvery:     envDur("FLUSH_EVERY", 5*time.Second),
-		BatchSize:      envInt("BATCH_SIZE", 100),
-		AllowOrigins:   getenv("ALLOW_ORIGINS", "*"),
-		PublicURL:      getenv("APP_PUBLIC_URL", "http://localhost:3000"),
-		APIPublicURL:   getenv("API_PUBLIC_URL", "http://localhost:8086"),
-		TrustedProxies: proxyList(getenv("TRUSTED_PROXIES", "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")),
+		Port:            getenv("PORT", "8086"),
+		Bind:            os.Getenv("BIND"),
+		DBURL:           getenv("DATABASE_URL", "postgres://webstats:webstats@localhost:5432/webstats"),
+		JWTSecret:       getenv("JWT_SECRET", "webstats-dev-secret-change-me"),
+		RedisURL:        os.Getenv("REDIS_URL"),
+		GeoCSV:          os.Getenv("GEO_CSV"),
+		ASNCSV:          os.Getenv("GEO_ASN_CSV"),
+		IPHashSalt:      getenv("IP_HASH_SALT", "webstats-salt"),
+		BufferSize:      envInt("BUFFER_SIZE", 4096),
+		FlushEvery:      envDur("FLUSH_EVERY", 5*time.Second),
+		BatchSize:       envInt("BATCH_SIZE", 100),
+		AllowOrigins:    getenv("ALLOW_ORIGINS", "*"),
+		PublicURL:       getenv("APP_PUBLIC_URL", "http://localhost:3000"),
+		APIPublicURL:    getenv("API_PUBLIC_URL", "http://localhost:8086"),
+		TrustedProxies:  proxyList(getenv("TRUSTED_PROXIES", "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")),
 		RateLimitPerMin: envInt("RATE_LIMIT_PER_MIN", 600),
 	}
 	if c.BufferSize <= 0 {
@@ -64,7 +75,29 @@ func Load() *Config {
 	if c.BatchSize <= 0 {
 		c.BatchSize = 100
 	}
-	return c
+	if v := os.Getenv("FLUSH_EVERY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("FLUSH_EVERY must be a positive duration")
+		}
+		c.FlushEvery = d
+	}
+	for _, bound := range []struct {
+		key string
+		max int
+	}{
+		{"BUFFER_SIZE", 1000000},
+		{"BATCH_SIZE", 10000},
+		{"RATE_LIMIT_PER_MIN", 10000000},
+	} {
+		if v := os.Getenv(bound.key); v != "" {
+			n, err := strconv.ParseUint(v, 10, strconv.IntSize)
+			if err != nil || n > uint64(bound.max) {
+				return nil, fmt.Errorf("%s must be an integer between 0 and %d", bound.key, bound.max)
+			}
+		}
+	}
+	return c, nil
 }
 
 func proxyList(s string) []string {
@@ -83,14 +116,11 @@ func envInt(key string, def int) int {
 	if v == "" {
 		return def
 	}
-	n := 0
-	for _, c := range v {
-		if c < '0' || c > '9' {
-			return def
-		}
-		n = n*10 + int(c-'0')
+	n, err := strconv.ParseUint(v, 10, strconv.IntSize-1)
+	if err != nil {
+		return def
 	}
-	return n
+	return int(n)
 }
 
 func envDur(key string, def time.Duration) time.Duration {

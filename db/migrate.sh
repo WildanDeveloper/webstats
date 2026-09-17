@@ -10,6 +10,10 @@ export PGPASSWORD="${PGPASSWORD:-webstats}"
 
 for f in "$DIR"/migrations/*.sql; do
   echo "applying $(basename "$f")"
-  psql -h "$HOST" -p "$PORT" -U "$USER" -d "$DB" -v ON_ERROR_STOP=1 -f "$f" -q
+  if [ -n "${DATABASE_URL:-}" ]; then
+    psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f" -q
+  else
+    psql -h "$HOST" -p "$PORT" -U "$USER" -d "$DB" -v ON_ERROR_STOP=1 -f "$f" -q
+  fi
 done
 echo "migrations done"

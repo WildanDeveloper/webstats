@@ -9,5 +9,8 @@ WITH rotated AS (
   WHERE email = 'admin@webstats.dev'
     AND password_hash = crypt('admin123', password_hash)
   RETURNING id
+), revoked AS (
+  DELETE FROM sessions WHERE user_id IN (SELECT id FROM rotated)
+  RETURNING user_id
 )
 SELECT count(*) AS rotated_default_admin FROM rotated;

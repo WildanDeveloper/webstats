@@ -3,6 +3,7 @@ package geo
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"os"
 	"sort"
@@ -26,7 +27,7 @@ func Load(path string) (*Resolver, error) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return r, nil
+		return r, fmt.Errorf("open country dataset: %w", err)
 	}
 	defer f.Close()
 
@@ -50,6 +51,13 @@ func Load(path string) (*Resolver, error) {
 			continue
 		}
 		r.entries = append(r.entries, entry{lo: lo, hi: hi, cc: cc})
+	}
+	if err := sc.Err(); err != nil {
+		r.entries = nil
+		return r, fmt.Errorf("read country dataset: %w", err)
+	}
+	if len(r.entries) == 0 {
+		return r, fmt.Errorf("country dataset contains no valid IPv4 records")
 	}
 	sort.Slice(r.entries, func(i, j int) bool { return r.entries[i].lo < r.entries[j].lo })
 	r.loaded = true

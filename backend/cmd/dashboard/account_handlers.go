@@ -40,15 +40,26 @@ func changePasswordHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 		if err != nil {
 			return errJSON(c, 500, "hash failed")
 		}
-		if _, err := db.Exec(c.Context(), `
-			UPDATE users SET password_hash = $1 WHERE id = $2`, string(newHash), auth.UserID(c)); err != nil {
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return errJSON(c, 500, "transaction failed")
+		}
+		defer tx.Rollback(c.Context())
+		tag, err := tx.Exec(c.Context(), `
+			UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3`, string(newHash), auth.UserID(c), hash)
+		if err != nil || tag.RowsAffected() != 1 {
 			return errJSON(c, 500, "update failed")
 		}
 		// Revoke every other session; the current device stays signed in.
 		current := m.HashToken(auth.BearerToken(c.Get("Authorization")))
-		_, _ = db.Exec(c.Context(),
+		if _, err := tx.Exec(c.Context(),
 			`DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2`,
-			auth.UserID(c), current)
+			auth.UserID(c), current); err != nil {
+			return errJSON(c, 500, "session revocation failed")
+		}
+		if err := tx.Commit(c.Context()); err != nil {
+			return errJSON(c, 500, "commit failed")
+		}
 		return c.JSON(fiber.Map{"ok": true})
 	}
 }

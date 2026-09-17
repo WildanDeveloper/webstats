@@ -3,12 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/webstats/backend/internal/auth"
 	"github.com/webstats/backend/internal/model"
 )
 
@@ -113,6 +118,113 @@ func TestIsBlockedIPHost(t *testing.T) {
 	}
 	if !isBlockedIPHost("nonexistent.invalid.webstats.test") {
 		t.Fatal("unresolvable host should fail closed")
+	}
+}
+
+func TestIsPrivateIPPrefixClasses(t *testing.T) {
+	blocked := []string{
+		"10.1.2.3", "172.16.0.1", "192.168.1.1", "100.64.0.1",
+		"169.254.169.254", "127.0.0.1", "0.0.0.0", "224.0.0.1",
+		"240.0.0.1", "198.18.0.5", "192.0.2.9", "198.51.100.7",
+		"203.0.113.9", "192.0.0.5", "192.88.99.1", "255.255.255.255",
+		"::1", "fe80::1", "fc00::1", "fec0::1", "ff02::1",
+		"2001:db8::5", "2002:a00:1::5", "64:ff9b::a00:1", "100::1",
+		"2001::5", "3fff::5", "::5",
+	}
+	for _, ip := range blocked {
+		if !isPrivateIP(net.ParseIP(ip)) {
+			t.Errorf("reserved address %s not blocked", ip)
+		}
+	}
+	allowed := []string{"8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"}
+	for _, ip := range allowed {
+		if isPrivateIP(net.ParseIP(ip)) {
+			t.Errorf("public address %s blocked", ip)
+		}
+	}
+}
+
+func TestPublicMonitorURLStripsCredentials(t *testing.T) {
+	got := publicMonitorURL("https://user:secret@example.com/health?api_key=xyz#frag")
+	want := "https://example.com/health"
+	if got != want {
+		t.Fatalf("publicMonitorURL = %q, want %q", got, want)
+	}
+}
+
+func TestSiteTransitionInitialDown(t *testing.T) {
+	if got := siteTransition("", "down"); got != "site_down" {
+		t.Fatalf("initial down transition = %q, want site_down", got)
+	}
+	if got := siteTransition("up", "down"); got != "site_down" {
+		t.Fatalf("up->down transition = %q, want site_down", got)
+	}
+	if got := siteTransition("down", "up"); got != "site_up" {
+		t.Fatalf("down->up transition = %q, want site_up", got)
+	}
+	if got := siteTransition("down", "down"); got != "" {
+		t.Fatalf("unchanged status produced transition %q", got)
+	}
+	if got := siteTransition("", "up"); got != "" {
+		t.Fatalf("first check up produced transition %q, want none", got)
+	}
+}
+
+func TestTrafficAnomalyDropBaseline(t *testing.T) {
+	if !trafficAnomaly(0, 100) {
+		t.Fatal("drop to zero from a busy baseline must be an anomaly")
+	}
+	if !trafficAnomaly(5, 100) {
+		t.Fatal("near-zero drop must be an anomaly")
+	}
+	if trafficAnomaly(100, 100) {
+		t.Fatal("flat traffic must not be an anomaly")
+	}
+	if !trafficAnomaly(50, 100) {
+		t.Fatal("exactly -50% is the inclusive drop boundary and must be an anomaly")
+	}
+	if !trafficAnomaly(300, 100) {
+		t.Fatal("a 3x rise must be an anomaly")
+	}
+	if trafficAnomaly(0, 10) {
+		t.Fatal("tiny baseline must never be reported")
+	}
+}
+
+func TestRealtimeStreamAuthAndBody(t *testing.T) {
+	app := fiber.New()
+	app.Get("/sites/:id/realtime/stream", func(c *fiber.Ctx) error {
+		c.Locals("claims", &auth.Claims{})
+		c.Locals("uid", "11111111-1111-1111-1111-111111111111")
+		c.Set("Content-Type", "text/event-stream")
+		return c.SendString("data: {}\n\n")
+	})
+	req := httptest.NewRequest("GET", "/sites/s1/realtime/stream?token=t", nil)
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("SSE handler response = %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+}
+
+func TestMemberDailyReportValidatesSchedule(t *testing.T) {
+	if validReportSchedule("daily", "", 8) != true {
+		t.Fatal("daily with no day must be valid")
+	}
+	if validReportSchedule("weekly", "funday", 8) {
+		t.Fatal("weekly with unknown day must be rejected")
+	}
+	if validReportSchedule("monthly", "32", 8) {
+		t.Fatal("monthly day 32 must be rejected")
+	}
+	if validReportSchedule("monthly", "1", 24) {
+		t.Fatal("hour 24 must be rejected")
+	}
+	if !validReportSchedule("monthly", "31", 8) {
+		t.Fatal("monthly day 31 must be accepted")
 	}
 }
 

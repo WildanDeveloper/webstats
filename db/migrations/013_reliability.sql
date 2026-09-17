@@ -41,5 +41,6 @@ CREATE TABLE IF NOT EXISTS incidents (
     reason TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_site ON incidents(site_id, started_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_open_site ON incidents(site_id) WHERE resolved_at IS NULL;
+DROP INDEX IF EXISTS uq_incidents_open_site;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_open_site ON incidents(site_id) WHERE resolved_at IS NULL AND monitor_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_open_monitor ON incidents(monitor_id) WHERE resolved_at IS NULL AND monitor_id IS NOT NULL;

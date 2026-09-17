@@ -24,6 +24,43 @@ jobs:
         working-directory: backend
         run: go test ./...
 
+  backend-db:
+    name: Backend (PostgreSQL integration)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: webstats
+          POSTGRES_PASSWORD: webstats-ci-only
+          POSTGRES_DB: webstats_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U webstats -d webstats_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: webstats
+      PGPASSWORD: webstats-ci-only
+      PGDATABASE: webstats_test
+      TEST_DATABASE_URL: postgres://webstats:webstats-ci-only@127.0.0.1:5432/webstats_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Fresh migrations
+        run: sh db/migrate.sh
+      - name: Test with PostgreSQL
+        working-directory: backend
+        run: go test -count=1 ./...
+
   frontend:
     name: Frontend (typecheck, build)
     runs-on: ubuntu-latest

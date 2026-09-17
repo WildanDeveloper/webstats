@@ -82,7 +82,10 @@ func (b *Buffer) CollectHandler(c *fiber.Ctx) error {
 	if ua.IsBot(rec.UA) {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"ok": true})
 	}
-	b.Push(rec)
+	if err := b.Push(rec); err != nil {
+		c.Set("Retry-After", "1")
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "ingest unavailable"})
+	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"ok": true})
 }
 

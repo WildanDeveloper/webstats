@@ -4,10 +4,10 @@ services:
     container_name: webstats-db
     environment:
       POSTGRES_USER: webstats
-      POSTGRES_PASSWORD: webstats
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a unique random hex password}
       POSTGRES_DB: webstats
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,7 +21,7 @@ services:
     container_name: webstats-redis
     profiles: ["queue"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
 
@@ -35,7 +35,7 @@ services:
       PGHOST: db
       PGPORT: "5432"
       PGUSER: webstats
-      PGPASSWORD: webstats
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a unique random hex password}
       PGDATABASE: webstats
     entrypoint: >
       sh -c 'for f in /migrations/*.sql; do
@@ -52,12 +52,14 @@ services:
     profiles: ["full", "queue"]
     environment:
       PORT: "8085"
-      DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
+      DATABASE_URL: postgres://webstats:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a unique random hex password}@db:5432/webstats
       GEO_CSV: /app/data/geo.csv
       GEO_ASN_CSV: /app/data/asn.csv
       REDIS_URL: ${REDIS_URL:-}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a unique random 32-byte hex secret}
+      IP_HASH_SALT: ${IP_HASH_SALT:?Set IP_HASH_SALT to a unique random 32-byte hex salt}
     ports:
-      - "8085:8085"
+      - "127.0.0.1:8085:8085"
     depends_on:
       db:
         condition: service_healthy
@@ -68,15 +70,17 @@ services:
     build: ./backend
     container_name: webstats-dashboard
     profiles: ["full"]
-    command: ["/usr/local/bin/dashboard"]
+    entrypoint: ["/usr/local/bin/dashboard"]
     environment:
       PORT: "8086"
-      DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
-      JWT_SECRET: change-me-in-production
-      APP_PUBLIC_URL: http://localhost:3000
-      API_PUBLIC_URL: http://localhost:8086
+      DATABASE_URL: postgres://webstats:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a unique random hex password}@db:5432/webstats
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a unique random 32-byte hex secret}
+      IP_HASH_SALT: ${IP_HASH_SALT:?Set IP_HASH_SALT to a unique random 32-byte hex salt}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:3000}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8086}
+      ALLOW_ORIGINS: ${APP_PUBLIC_URL:-http://localhost:3000}
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
     depends_on:
       db:
         condition: service_healthy
@@ -87,12 +91,16 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8086
-        NEXT_PUBLIC_TRACKER_URL: http://localhost:8085
+        NEXT_PUBLIC_API_URL: ${API_PUBLIC_URL:-http://localhost:8086}
+        NEXT_PUBLIC_TRACKER_URL: ${NEXT_PUBLIC_TRACKER_URL:-http://localhost:8085}
     container_name: webstats-web
     profiles: ["full"]
+    environment:
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET to a unique random 32-byte hex secret}
+      NEXTAUTH_URL: ${APP_PUBLIC_URL:-http://localhost:3000}
+      API_SERVER_URL: http://dashboard:8086
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - dashboard
 
@@ -100,10 +108,12 @@ services:
     build: ./backend
     container_name: webstats-worker
     profiles: ["queue"]
-    command: ["/usr/local/bin/worker"]
+    entrypoint: ["/usr/local/bin/worker"]
     environment:
-      DATABASE_URL: postgres://webstats:webstats@db:5432/webstats
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://webstats:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD to a unique random hex password}@db:5432/webstats
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET to a unique random 32-byte hex secret}
+      IP_HASH_SALT: ${IP_HASH_SALT:?Set IP_HASH_SALT to a unique random 32-byte hex salt}
     depends_on:
       db:
         condition: service_healthy

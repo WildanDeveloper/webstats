@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/auth";
 import type { ApiKey } from "@/lib/types";
 import {
@@ -30,14 +30,34 @@ export default function AccountView({
   const [newKey, setNewKey] = useState("");
   const [keyMsg, setKeyMsg] = useState("");
 
-  async function loadKeys() {
+  const [keysLoading, setKeysLoading] = useState(true);
+  const [keysError, setKeysError] = useState("");
+
+  const loadKeys = useCallback(async (isActive: () => boolean = () => true) => {
+    if (!token) {
+      setKeysLoading(false);
+      return;
+    }
+    setKeysLoading(true);
+    setKeysError("");
     try {
       const res = await apiFetch<ApiKey[]>(`/api/account/api-keys`, token);
-      setKeys(res);
-    } catch {
-      setKeys([]);
+      if (isActive()) setKeys(res || []);
+    } catch (err: any) {
+      if (isActive()) setKeysError(`Failed to load API keys: ${err.message || "Request failed"}`);
+    } finally {
+      if (isActive()) setKeysLoading(false);
     }
-  }
+  }, [token]);
+
+  useEffect(() => {
+    let alive = true;
+    setKeys([]);
+    loadKeys(() => alive);
+    return () => {
+      alive = false;
+    };
+  }, [loadKeys]);
 
   async function changePassword(e: React.FormEvent) {
     e.preventDefault();
@@ -185,7 +205,11 @@ export default function AccountView({
         )}
 
         <div className="mt-4 space-y-2">
-          {keys.length === 0 && <p className="text-xs text-faint">No API keys yet.</p>}
+          {keysLoading && <p className="text-xs text-faint">Loading API keys...</p>}
+          {keysError && <p role="alert" className="text-xs text-red-400">{keysError}</p>}
+          {token && !keysLoading && !keysError && keys.length === 0 && (
+            <p className="text-xs text-faint">No API keys yet.</p>
+          )}
           {keys.map((k) => (
             <div key={k.id} className="flex items-center gap-3 rounded-lg border border-edge/60 px-3 py-2.5">
               <div className="min-w-0 flex-1">

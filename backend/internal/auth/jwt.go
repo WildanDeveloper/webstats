@@ -65,12 +65,17 @@ func (m *Manager) CheckPassword(hash, pw string) bool {
 }
 
 func (m *Manager) Issue(userID, email, role string) (string, error) {
+	id, err := RandToken()
+	if err != nil {
+		return "", err
+	}
 	now := time.Now()
 	claims := Claims{
 		UserID: userID,
 		Email:  email,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        id,
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			Issuer:    "webstats",
@@ -81,11 +86,11 @@ func (m *Manager) Issue(userID, email, role string) (string, error) {
 
 func (m *Manager) Parse(token string) (*Claims, error) {
 	t, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+		if t.Method != jwt.SigningMethodHS256 {
 			return nil, errors.New("unexpected signing method")
 		}
 		return m.secret, nil
-	})
+	}, jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}

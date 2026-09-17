@@ -120,6 +120,7 @@ export default function NotificationsView({
   const [rTarget, setRTarget] = useState("");
   const [rThreshold, setRThreshold] = useState("3");
   const [rCooldown, setRCooldown] = useState("30");
+  const [rVitalsCooldown, setRVitalsCooldown] = useState("720");
   const [rVitalsThreshold, setRVitalsThreshold] = useState("2500");
   const [rSecret, setRSecret] = useState("");
   const [showAddRule, setShowAddRule] = useState(false);
@@ -215,7 +216,7 @@ export default function NotificationsView({
       }
       if (rEvent === "vitals_lcp" && parseInt(rVitalsThreshold || "2500", 10) > 0) {
         params.threshold = parseInt(rVitalsThreshold || "2500", 10);
-        params.cooldown_min = parseInt(rCooldown || "720", 10) || 720;
+        params.cooldown_min = parseInt(rVitalsCooldown || "720", 10) || 720;
       }
       if (rChannel === "webhook" && rSecret) params.secret = rSecret;
       const res = await apiFetch<{ id: string }>("/api/notifications/rules", token, {
@@ -545,7 +546,7 @@ async function refreshLogs() {
             {rEvent === "vitals_lcp" && (
               <div className="grid gap-3 md:grid-cols-2">
                 <input className={inputCls} type="number" min={100} placeholder="p75 LCP threshold in ms (default 2500)" value={rVitalsThreshold} onChange={(e) => setRVitalsThreshold(e.target.value)} />
-                <input className={inputCls} type="number" min={5} placeholder="Cooldown minutes (default 720)" value={rCooldown === "30" ? "720" : rCooldown} onChange={(e) => setRCooldown(e.target.value)} />
+                <input className={inputCls} type="number" min={5} placeholder="Cooldown minutes (default 720)" value={rVitalsCooldown} onChange={(e) => setRVitalsCooldown(e.target.value)} />
               </div>
             )}
             <p className="text-xs text-faint">{EVENT_HINT[rEvent]}</p>

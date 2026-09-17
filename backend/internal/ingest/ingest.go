@@ -2,7 +2,9 @@ package ingest
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -10,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/webstats/backend/internal/analytics"
@@ -19,8 +22,12 @@ import (
 )
 
 const RedisList = "webstats:pageviews"
+const RedisProcessing = "webstats:pageviews:processing"
+
+var ErrBufferFull = errors.New("ingest buffer full")
 
 type Record struct {
+	ID        string            `json:"id"`
 	Kind      string            `json:"kind"`
 	SiteID    string            `json:"site_id"`
 	SessionID string            `json:"session_id"`
@@ -38,21 +45,32 @@ type Record struct {
 	EventName string            `json:"event_name"`
 	URL       string            `json:"url"`
 	Props     map[string]any    `json:"props"`
-	UTM       map[string]string `json:"-"`
+	UTM       map[string]string `json:"utm"`
 }
 
 type Buffer struct {
-	cfg     *config.Config
-	db      *pgxpool.Pool
-	geo     *geo.Resolver
-	asn     *geo.ASNResolver
-	redis   *redis.Client
-	ch      chan Record
-	mu      sync.Mutex
-	siteIDs map[string]siteIDEntry
-	hashing map[string]boolEntry
-	limiter *siteLimiter
-	stop    chan struct{}
+	cfg           *config.Config
+	db            *pgxpool.Pool
+	geo           *geo.Resolver
+	asn           *geo.ASNResolver
+	redis         *redis.Client
+	ch            chan Record
+	mu            sync.Mutex
+	siteIDs       map[string]siteIDEntry
+	hashing       map[string]boolEntry
+	limiter       *siteLimiter
+	stop          chan struct{}
+	done          chan struct{}
+	runOnce       sync.Once
+	stopOnce      sync.Once
+	acceptMu      sync.RWMutex
+	stopped       bool
+	stopErr       error
+	persist       func(context.Context, []Record) error
+	schemaMu      sync.Mutex
+	schemaReady   bool
+	retryEvery    time.Duration
+	shutdownGrace time.Duration
 }
 
 type siteIDEntry struct {
@@ -79,6 +97,7 @@ func NewBuffer(cfg *config.Config, db *pgxpool.Pool, g *geo.Resolver, a *geo.ASN
 		hashing: map[string]boolEntry{},
 		limiter: newSiteLimiter(cfg.RateLimitPerMin),
 		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 	if cfg.RedisURL != "" {
 		opt, err := redis.ParseURL(cfg.RedisURL)
@@ -139,70 +158,240 @@ func (b *Buffer) SiteInfo(ctx context.Context, key string) (string, string) {
 	return id, domain
 }
 
-func (b *Buffer) Stop() { close(b.stop) }
-
-func (b *Buffer) Run(ctx context.Context) {
-	go b.flusher(ctx)
+func (b *Buffer) Stop() error {
+	return b.Shutdown(context.Background())
 }
 
-func (b *Buffer) Push(r Record) {
+// Shutdown stops accepting new records, drains the buffered queue with the
+// caller-provided bounded context, and waits for the flusher to finish.
+func (b *Buffer) Shutdown(ctx context.Context) error {
+	b.Run(context.Background())
+	b.stopOnce.Do(func() {
+		b.acceptMu.Lock()
+		b.stopped = true
+		close(b.ch)
+		close(b.stop)
+		b.acceptMu.Unlock()
+	})
+	<-b.done
+	return b.stopErr
+}
+
+func (b *Buffer) Run(ctx context.Context) {
+	b.runOnce.Do(func() {
+		go b.flusher(ctx)
+	})
+}
+
+func (b *Buffer) Push(r Record) error {
+	b.acceptMu.RLock()
+	defer b.acceptMu.RUnlock()
+	if b.stopped {
+		return errors.New("ingest shutting down")
+	}
 	if b.redis != nil {
-		if data, err := json.Marshal(r); err == nil {
-			if err := b.redis.RPush(context.Background(), RedisList, data).Err(); err == nil {
-				return
-			} else {
-				log.Printf("redis push failed, buffering locally: %v", err)
-			}
-		} else {
-			log.Printf("record marshal failed, buffering locally: %v", err)
+		data, err := json.Marshal(r)
+		if err != nil {
+			return fmt.Errorf("marshal record: %w", err)
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err = b.redis.LPush(ctx, RedisList, data).Err()
+		cancel()
+		if err == nil {
+			return nil
+		}
+		log.Printf("redis push failed, buffering locally: %v", err)
 	}
 	select {
 	case b.ch <- r:
+		return nil
 	default:
-		log.Printf("buffer full, dropping record")
+		return ErrBufferFull
 	}
 }
 
 func (b *Buffer) flusher(ctx context.Context) {
+	defer close(b.done)
 	ticker := time.NewTicker(b.cfg.FlushEvery)
 	defer ticker.Stop()
 	batch := make([]Record, 0, b.cfg.BatchSize)
-	flush := func() {
+	retryEvery := b.retryEvery
+	if retryEvery <= 0 {
+		retryEvery = time.Second
+	}
+	grace := b.shutdownGrace
+	if grace <= 0 {
+		grace = 100 * time.Millisecond
+	}
+	flush := func(ctx context.Context) error {
 		if len(batch) == 0 {
-			return
+			return nil
 		}
-		if err := b.flush(ctx, batch); err != nil {
-			log.Printf("flush failed: %v", err)
+		persist := b.persist
+		if persist == nil {
+			persist = b.flush
+		}
+		if err := persist(ctx, batch); err != nil {
+			return err
 		}
 		batch = batch[:0]
+		return nil
 	}
+	var input chan Record = b.ch
+	var retryC <-chan time.Time
 	for {
+		if len(batch) >= b.cfg.BatchSize {
+			input = nil
+		}
 		select {
 		case <-ctx.Done():
-			flush()
-			return
+			ctx = context.Background()
+			b.stopOnce.Do(func() {
+				b.acceptMu.Lock()
+				b.stopped = true
+				close(b.ch)
+				close(b.stop)
+				b.acceptMu.Unlock()
+			})
+			input = nil
 		case <-b.stop:
-			flush()
-			return
-		case r := <-b.ch:
-			batch = append(batch, r)
-			if len(batch) >= b.cfg.BatchSize {
-				flush()
+			drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			for {
+				for len(batch) < b.cfg.BatchSize {
+					r, ok := <-b.ch
+					if !ok {
+						break
+					}
+					batch = append(batch, r)
+				}
+				if err := flush(drainCtx); err != nil {
+					if drainCtx.Err() != nil {
+						b.stopErr = fmt.Errorf("shutdown drain incomplete: %d records left: %w", len(batch)+len(b.ch), err)
+						cancel()
+						return
+					}
+					select {
+					case <-drainCtx.Done():
+					case <-time.After(grace):
+					}
+				} else if len(b.ch) == 0 {
+					cancel()
+					return
+				}
 			}
+		case <-retryC:
+			retryC = nil
+			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if err := flush(writeCtx); err != nil {
+				log.Printf("flush failed, retaining batch: %v", err)
+				timer := time.NewTimer(retryEvery)
+				retryC = timer.C
+			}
+			cancel()
+		case r, ok := <-input:
+			if !ok {
+				input = nil
+				continue
+			}
+			batch = append(batch, r)
+			if len(batch) < b.cfg.BatchSize {
+				continue
+			}
+			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if err := flush(writeCtx); err != nil {
+				log.Printf("flush failed, retaining batch: %v", err)
+				timer := time.NewTimer(retryEvery)
+				retryC = timer.C
+			}
+			cancel()
 		case <-ticker.C:
-			flush()
+			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if err := flush(writeCtx); err != nil {
+				log.Printf("flush failed, retaining batch: %v", err)
+				timer := time.NewTimer(retryEvery)
+				retryC = timer.C
+			}
+			cancel()
 		}
 	}
 }
 
+func newRecordID() string {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf("%x", id[:])
+}
+
+func (b *Buffer) EnsureStorage(ctx context.Context) error {
+	b.schemaMu.Lock()
+	defer b.schemaMu.Unlock()
+	if b.schemaReady {
+		return nil
+	}
+	_, err := b.db.Exec(ctx, `CREATE TABLE IF NOT EXISTS ingest_receipts (id text PRIMARY KEY, site_id uuid NOT NULL REFERENCES sites(id) ON DELETE CASCADE)`)
+	if err == nil {
+		b.schemaReady = true
+	}
+	return err
+}
+
 func (b *Buffer) flush(ctx context.Context, recs []Record) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	if b.db == nil {
+		return errors.New("no database pool configured")
+	}
+	if err := b.EnsureStorage(ctx); err != nil {
+		return fmt.Errorf("prepare ingest receipts: %w", err)
+	}
+	analytics.EnsurePageviewPartitions(ctx, b.db)
+	tx, err := b.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}()
+	ids := make([]string, 0, len(recs))
+	sites := make([]string, 0, len(recs))
+	for i := range recs {
+		if recs[i].SiteID == "" {
+			continue
+		}
+		if recs[i].ID == "" {
+			recs[i].ID = newRecordID()
+		}
+		ids = append(ids, recs[i].ID)
+		sites = append(sites, recs[i].SiteID)
+	}
+	rows, err := tx.Query(ctx, `INSERT INTO ingest_receipts (id, site_id) SELECT id, site_id::uuid FROM unnest($1::text[], $2::text[]) AS r(id, site_id) ON CONFLICT DO NOTHING RETURNING id`, ids, sites)
+	if err != nil {
+		return err
+	}
+	accepted := make(map[string]bool, len(ids))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		accepted[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	pvs := make([]analytics.PageviewRow, 0, len(recs))
 	evs := make([]analytics.EventRowIn, 0, 8)
 	for _, r := range recs {
-		if r.SiteID == "" {
+		if !accepted[r.ID] {
 			continue
 		}
+		delete(accepted, r.ID)
 		switch r.Kind {
 		case "event":
 			evs = append(evs, analytics.EventRowIn{
@@ -221,13 +410,36 @@ func (b *Buffer) flush(ctx context.Context, recs []Record) error {
 		}
 	}
 
-	if err := analytics.InsertPageviews(ctx, b.db, pvs); err != nil {
-		return fmt.Errorf("insert pageviews: %w", err)
+	pvRows := make([][]any, 0, len(pvs))
+	for _, r := range pvs {
+		pvRows = append(pvRows, []any{
+			r.SiteID, r.SessionID, r.Path, r.Title, r.Referrer, r.ReferrerHost,
+			r.UA, r.Browser, r.OS, r.Device, r.Country, r.ISP, r.Screen, r.Lang,
+			r.IPHash, r.IP, r.VisitedAt, r.UTM["utm_source"], r.UTM["utm_medium"],
+			r.UTM["utm_campaign"], r.UTM["utm_content"], r.UTM["utm_term"],
+		})
 	}
-	if err := analytics.InsertEvents(ctx, b.db, evs); err != nil {
-		return fmt.Errorf("insert events: %w", err)
+	if len(pvRows) > 0 {
+		_, err = tx.CopyFrom(ctx, pgx.Identifier{"pageviews"}, []string{
+			"site_id", "session_id", "path", "title", "referrer", "referrer_host",
+			"ua", "browser", "os", "device", "country", "isp", "screen", "lang",
+			"ip_hash", "ip", "visited_at", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+		}, pgx.CopyFromRows(pvRows))
+		if err != nil {
+			return fmt.Errorf("insert pageviews: %w", err)
+		}
 	}
-	return nil
+	evRows := make([][]any, 0, len(evs))
+	for _, r := range evs {
+		evRows = append(evRows, []any{r.SiteID, r.SessionID, r.Name, r.URL, r.Props, r.CreatedAt})
+	}
+	if len(evRows) > 0 {
+		_, err = tx.CopyFrom(ctx, pgx.Identifier{"events"}, []string{"site_id", "session_id", "name", "url", "props", "created_at"}, pgx.CopyFromRows(evRows))
+		if err != nil {
+			return fmt.Errorf("insert events: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
@@ -241,7 +453,7 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 		isp = b.asn.Org(ip)
 	}
 	ts := time.Now().UTC()
-	if t, ok := raw["ts"].(float64); ok && t > 0 {
+	if t, ok := raw["ts"].(float64); ok && t > 0 && t <= float64(ts.UnixMilli()) {
 		ts = time.UnixMilli(int64(t)).UTC()
 	}
 	// Geo/ISP are resolved from the live request IP above, but the raw IP is
@@ -259,7 +471,12 @@ func (b *Buffer) Normalize(raw map[string]any, ip string) Record {
 	if spam := hostOf(referrer); isReferrerSpam(spam) {
 		referrer = ""
 	}
+	id := str(raw["id"])
+	if id == "" || len(id) > 128 {
+		id = newRecordID()
+	}
 	return Record{
+		ID:        siteID + ":" + id,
 		Kind:      str(raw["kind"]),
 		SiteID:    siteID,
 		SessionID: str(raw["session_id"]),

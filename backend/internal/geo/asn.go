@@ -3,6 +3,7 @@ package geo
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"os"
 	"sort"
@@ -26,7 +27,7 @@ func LoadASN(path string) (*ASNResolver, error) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return r, nil
+		return r, fmt.Errorf("open ASN dataset: %w", err)
 	}
 	defer f.Close()
 
@@ -55,6 +56,13 @@ func LoadASN(path string) (*ASNResolver, error) {
 			continue
 		}
 		r.entries = append(r.entries, asnEntry{lo: lo, hi: hi, org: org})
+	}
+	if err := sc.Err(); err != nil {
+		r.entries = nil
+		return r, fmt.Errorf("read ASN dataset: %w", err)
+	}
+	if len(r.entries) == 0 {
+		return r, fmt.Errorf("ASN dataset contains no valid IPv4 records")
 	}
 	sort.Slice(r.entries, func(i, j int) bool { return r.entries[i].lo < r.entries[j].lo })
 	r.loaded = true

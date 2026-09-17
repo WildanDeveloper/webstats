@@ -91,6 +91,7 @@ func main() {
 	pub.Get("/:token/insights", publicInsightsHandler(pool))
 	pub.Get("/:token/vitals", publicVitalsHandler(pool))
 
+	api.Get("/sites/:id/realtime/stream", realtimeStreamHandler(pool, authMgr))
 	api.Use(apiKeyFallback(pool))
 	authed := api.Group("", authMgr.Middleware())
 	authed.Get("/auth/me", meHandler(pool))
@@ -117,7 +118,6 @@ func main() {
 	stats.Get("/countries", topHandler(pool, "country"))
 	stats.Get("/events", eventsHandler(pool))
 	stats.Get("/realtime", realtimeHandler(pool))
-	stats.Get("/realtime/stream", realtimeStreamHandler(pool, authMgr))
 	stats.Get("/visitors", visitorsHandler(pool))
 	stats.Get("/visitors/:ip", visitorDetailHandler(pool))
 	stats.Get("/checks", checksHandler(pool))
@@ -181,7 +181,7 @@ func main() {
 	notif.Delete("/reports/:id", deleteReportHandler(pool))
 	notif.Post("/reports/:id/test", testReportHandler(pool, cfg))
 
-	admin := authed.Group("/admin", authMgr.AdminOnly())
+	admin := authed.Group("/admin", databaseAdminOnly(pool))
 	admin.Get("/users", listUsersHandler(pool))
 	admin.Post("/users", createUserHandler(pool, authMgr))
 	admin.Patch("/users/:id", updateUserHandler(pool, authMgr))

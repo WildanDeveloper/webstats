@@ -46,43 +46,71 @@ Dashboard Web ←→ Dashboard API :8086 ←→ PostgreSQL
 
 ## Getting started (development)
 
+From the repository root, generate the secrets described below and export them in each backend terminal. Start PostgreSQL and migrate:
+
 ```bash
-# 1. Database
 docker compose up -d db
-./db/migrate.sh
-
-# 2. Backend
-cd backend
-go run ./cmd/dashboard     # API       :8086
-go run ./cmd/ingest        # collector :8085
-
-# 3. Frontend
-cd frontend
-npm install
-NEXT_PUBLIC_API_URL=http://localhost:8086 npm run dev   # :3000
-
-# 4. Open http://localhost:3000, register your account via "Sign up",
-#    then promote it to admin from SQL:
-#       UPDATE users SET role='admin' WHERE email='you@example.com';
-#    (No default admin is seeded; older installs rotate the seeded
-#    admin123 password automatically via migration 011.)
+PGPASSWORD="$POSTGRES_PASSWORD" ./db/migrate.sh
+export DATABASE_URL="postgres://webstats:$POSTGRES_PASSWORD@localhost:5432/webstats"
 ```
+
+Run each service in a separate terminal, starting from the repository root:
+
+```bash
+(cd backend && PORT=8086 go run ./cmd/dashboard)
+(cd backend && PORT=8085 go run ./cmd/ingest)
+(cd frontend && npm ci && NEXTAUTH_URL=http://localhost:3000 NEXT_PUBLIC_API_URL=http://localhost:8086 npm run dev)
+```
+
+Open `http://localhost:3000`, register via "Sign up", then promote your account with SQL:
+
+```sql
+UPDATE users SET role='admin' WHERE email='you@example.com';
+```
+
+No default admin is seeded; older installs rotate the seeded `admin123` password via migration 011.
 
 ### Production with Docker
 
+Compose requires `POSTGRES_PASSWORD`, `JWT_SECRET`, `IP_HASH_SALT`, and `NEXTAUTH_SECRET`; missing or empty values stop configuration. Generate each independently with at least 32 random bytes:
+
 ```bash
-docker compose --profile full up -d --build
-# starts: db → migrate → ingest(:8085) + dashboard(:8086) + web(:3000)
-# add the Redis worker instead of direct writes:
-docker compose --profile full --profile queue up -d --build
+export POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+export JWT_SECRET="$(openssl rand -hex 32)"
+export IP_HASH_SALT="$(openssl rand -hex 32)"
+export NEXTAUTH_SECRET="$(openssl rand -hex 32)"
 ```
 
-Put a reverse proxy (Caddy/Traefik/Nginx) in front for TLS and route:
+Persist these values securely (for example, a repository-root `.env` with mode `0600`, never committed). Do not regenerate them on each update or use the example placeholders. Use a hex database password to avoid URL-encoding issues. Changing `POSTGRES_PASSWORD` does not rotate the password in an existing database volume; update that database role separately. Compose checks presence, not entropy or placeholder values; never rely on backend development fallbacks in production.
+
+Set public URLs before building, using the single-domain layout in `deploy/Caddyfile`:
+
+```bash
+export APP_PUBLIC_URL=https://stats.yourdomain.com
+export API_PUBLIC_URL=https://stats.yourdomain.com/_api
+export NEXT_PUBLIC_TRACKER_URL=https://stats.yourdomain.com/_tracker
+docker compose --profile full up -d --build
+```
+
+This starts db, migrations, ingest, dashboard, and web. For local-only testing, omit the public URL overrides to use localhost ports 3000, 8086, and 8085.
+
+To enable queue mode, override the ingest environment as well as enabling the worker profile:
+
+```bash
+REDIS_URL=redis://redis:6379 docker compose --profile full --profile queue up -d --build
+```
+
+Persist `REDIS_URL=redis://redis:6379` in the same `.env` for subsequent queue deployments. The `queue` profile alone only adds Redis/worker; it cannot override ingest's environment. Ingest and worker use the same `REDIS_URL` override. To return to direct writes, drain the queue, remove `REDIS_URL`, then run `docker compose --profile full up -d --build --remove-orphans`.
+
+All published ports bind to `127.0.0.1`. Run Caddy on the host for TLS and route:
 
 | Path | Upstream |
 |---|---|
-| `/track.js`, `/api/collect`, `/api/event` | `ingest:8085` |
-| everything else | `web:3000` (which calls `dashboard:8086`) |
+| `/_api/*` (strip `/_api`) | `127.0.0.1:8086` |
+| `/_tracker/*` (strip `/_tracker`) | `127.0.0.1:8085` |
+| everything else | `127.0.0.1:3000` |
+
+The web container uses runtime `API_SERVER_URL=http://dashboard:8086` for authentication/SSR, runtime `NEXTAUTH_URL` from `APP_PUBLIC_URL`, and a separate runtime `NEXTAUTH_SECRET`. Browser URLs (`NEXT_PUBLIC_*`) are build arguments, not runtime settings: rebuild the web image whenever public API/tracker URLs change. Never supply secrets as build arguments.
 
 ### Configuration
 
@@ -98,7 +126,10 @@ Put a reverse proxy (Caddy/Traefik/Nginx) in front for TLS and route:
 | `APP_PUBLIC_URL` | `http://localhost:3000` | dashboard (links inside emails) |
 | `API_PUBLIC_URL` | `http://localhost:8086` | dashboard (unsubscribe links) |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8086` | frontend (build time) |
-| `NEXT_PUBLIC_TRACKER_URL` | same origin | frontend (install snippet) |
+| `NEXT_PUBLIC_TRACKER_URL` | same origin | frontend (build time, install snippet) |
+| `API_SERVER_URL` | public API fallback | frontend server (runtime; Compose uses `http://dashboard:8086`) |
+| `NEXTAUTH_URL` | unset | frontend (runtime; public dashboard origin) |
+| `NEXTAUTH_SECRET` | unset (**required in production**) | frontend (runtime; unique random secret) |
 
 ## Releases & updates
 

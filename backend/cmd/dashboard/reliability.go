@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/webstats/backend/internal/auth"
 	"github.com/webstats/backend/internal/config"
 	"github.com/webstats/backend/internal/model"
-	"github.com/webstats/backend/internal/notify"
 )
 
 // ---------- C1: heartbeats (dead man's switch) ----------
@@ -63,11 +63,11 @@ func createHeartbeatHandler(db *pgxpool.Pool, cfg *config.Config) fiber.Handler 
 		if len(in.Name) > 80 {
 			in.Name = in.Name[:80]
 		}
-		if in.PeriodSeconds < 60 {
+		if in.PeriodSeconds == 0 {
 			in.PeriodSeconds = 3600
 		}
-		if in.GraceSeconds < 0 {
-			in.GraceSeconds = 600
+		if in.PeriodSeconds < 60 || in.PeriodSeconds > 2592000 || in.GraceSeconds < 0 || in.GraceSeconds > 604800 {
+			return errJSON(c, 400, "period must be 60-2592000 seconds and grace 0-604800 seconds")
 		}
 		key, err := randHex(16)
 		if err != nil {
@@ -116,7 +116,7 @@ func heartbeatPingHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 400, "missing key")
 		}
 		tag, err := db.Exec(c.Context(), `
-			UPDATE heartbeats SET last_ping_at = now(), status = 'up' WHERE ping_key = $1`, key)
+			UPDATE heartbeats SET last_ping_at = now() WHERE ping_key = $1`, key)
 		if err != nil {
 			return errJSON(c, 500, "ping failed")
 		}
@@ -132,98 +132,16 @@ func heartbeatPingHandler(db *pgxpool.Pool) fiber.Handler {
 func heartbeatLoop(ctx context.Context, db *pgxpool.Pool) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	fire := func(siteID, event, name string) {
-		if inMaintenance(ctx, db, siteID, time.Now().UTC()) {
-			return
-		}
-		rows, err := db.Query(ctx, `
-			SELECT r.user_id, r.id, r.channel, r.target, r.provider_id, r.params, s.name, s.domain
-			FROM notif_rules r JOIN sites s ON s.id = r.site_id
-			WHERE r.site_id = $1 AND r.event = $2 AND r.enabled
-			  AND (r.last_sent_at IS NULL OR r.last_sent_at < now() - interval '5 minutes')`, siteID, event)
-		if err != nil {
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var userID, ruleID, channel, target string
-			var providerID *string
-			var params map[string]any
-			var siteName, domain string
-			if rows.Scan(&userID, &ruleID, &channel, &target, &providerID, &params, &siteName, &domain) != nil {
-				continue
-			}
-			payload := notify.AlertPayload{
-				Event: event, SiteID: siteID, SiteName: siteName, Domain: domain,
-				Name:   name,
-				Status: "late", Time: time.Now().UTC().Format(time.RFC3339),
-			}
-			if event == "heartbeat_ok" {
-				payload.Status = "ok"
-			}
-			_, _ = deliverRule(ctx, db, userID, channel, target, providerID, params, payload, false)
-			_, _ = db.Exec(ctx, `UPDATE notif_rules SET last_sent_at = now() WHERE id = $1`, ruleID)
-		}
-	}
 	run := func() {
-		// Going late: was up/new, silence exceeded period+grace.
-		rows, err := db.Query(ctx, `
-			SELECT id, site_id, name, COALESCE(last_alert_at, to_timestamp(0)) FROM heartbeats
-			WHERE status <> 'late'
-			  AND (last_ping_at IS NULL OR last_ping_at < now() - (period_seconds + grace_seconds) * interval '1 second')
-			  AND (last_ping_at IS NOT NULL OR created_at < now() - (period_seconds + grace_seconds) * interval '1 second')`)
-		if err != nil {
+		if err := ensureAlertState(ctx, db); err != nil {
+			log.Printf("heartbeat state initialization failed: %v", err)
 			return
 		}
-		type lateRow struct {
-			id, siteID, name string
-			lastAlert        time.Time
-		}
-		var late []lateRow
-		for rows.Next() {
-			var r lateRow
-			if rows.Scan(&r.id, &r.siteID, &r.name, &r.lastAlert) == nil {
-				late = append(late, r)
-			}
-		}
-		rows.Close()
-		for _, r := range late {
-			if _, err := db.Exec(ctx, `UPDATE heartbeats SET status = 'late', last_alert_at = now() WHERE id = $1`, r.id); err != nil {
-				continue
-			}
-			// A beat that never arrived at all (new heartbeat) stays silent
-			// to the owner until the first ping, so a typo'd cron command
-			// does not page anyone; afterwards every gap alerts.
-			var seen bool
-			_ = db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM heartbeats WHERE id = $1 AND last_ping_at IS NOT NULL)`, r.id).Scan(&seen)
-			if seen && time.Since(r.lastAlert) > time.Hour {
-				fire(r.siteID, "heartbeat_missed", r.name)
-			}
-		}
-		// Recovery: late beat received a fresh ping again.
-		rows2, err := db.Query(ctx, `
-			SELECT id, site_id, name FROM heartbeats
-			WHERE status = 'late' AND last_ping_at >= now() - (period_seconds + grace_seconds) * interval '1 second'`)
-		if err != nil {
+		if err := processHeartbeats(ctx, db); err != nil {
+			log.Printf("heartbeat transition failed: %v", err)
 			return
 		}
-		type okRow struct {
-			id, siteID, name string
-		}
-		var okRows []okRow
-		for rows2.Next() {
-			var r okRow
-			if rows2.Scan(&r.id, &r.siteID, &r.name) == nil {
-				okRows = append(okRows, r)
-			}
-		}
-		rows2.Close()
-		for _, r := range okRows {
-			if _, err := db.Exec(ctx, `UPDATE heartbeats SET status = 'up', last_alert_at = now() WHERE id = $1`, r.id); err != nil {
-				continue
-			}
-			fire(r.siteID, "heartbeat_ok", r.name)
-		}
+		drainAlertEvents(ctx, db)
 	}
 	run()
 	for {
@@ -234,6 +152,36 @@ func heartbeatLoop(ctx context.Context, db *pgxpool.Pool) {
 			run()
 		}
 	}
+}
+
+func processHeartbeats(ctx context.Context, db *pgxpool.Pool) error {
+	_, err := db.Exec(ctx, `
+		WITH changed AS (
+			UPDATE heartbeats SET status = 'late', last_alert_at = now()
+			WHERE status <> 'late'
+			  AND COALESCE(last_ping_at, created_at) < now() - (period_seconds::bigint + grace_seconds::bigint) * interval '1 second'
+			RETURNING site_id, name, last_ping_at
+		)
+		INSERT INTO dashboard_alert_events (site_id, event, name)
+		SELECT site_id, 'heartbeat_missed', name FROM changed WHERE last_ping_at IS NOT NULL`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(ctx, `
+		WITH changed AS (
+			UPDATE heartbeats SET status = 'up', last_alert_at = now()
+			WHERE status = 'late'
+			  AND last_ping_at >= now() - (period_seconds::bigint + grace_seconds::bigint) * interval '1 second'
+			RETURNING site_id, name
+		)
+		INSERT INTO dashboard_alert_events (site_id, event, name)
+		SELECT site_id, 'heartbeat_ok', name FROM changed`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(ctx, `UPDATE heartbeats SET status = 'up' WHERE status = 'new'
+		AND last_ping_at >= now() - (period_seconds::bigint + grace_seconds::bigint) * interval '1 second'`)
+	return err
 }
 
 // ---------- C4: maintenance windows ----------
@@ -247,33 +195,38 @@ func inMaintenance(ctx context.Context, db *pgxpool.Pool, siteID string, now tim
 		return false
 	}
 	defer rows.Close()
-	day := strings.ToLower(now.UTC().Format("Mon"))
-	minute := now.UTC().Hour()*60 + now.UTC().Minute()
 	for rows.Next() {
 		var daysCSV string
 		var start, end int
 		if rows.Scan(&daysCSV, &start, &end) != nil {
 			continue
 		}
-		match := false
-		for _, d := range strings.Split(daysCSV, ",") {
-			if strings.ToLower(strings.TrimSpace(d)) == day {
-				match = true
-				break
-			}
+		if maintenanceMatches(daysCSV, start, end, now) {
+			return true
 		}
-		if !match {
-			continue
+	}
+	return false
+}
+
+func maintenanceMatches(daysCSV string, start, end int, now time.Time) bool {
+	now = now.UTC()
+	minute := now.Hour()*60 + now.Minute()
+	if start <= end {
+		if minute < start || minute > end {
+			return false
 		}
-		if start <= end {
-			if minute >= start && minute <= end {
-				return true
-			}
-		} else {
-			// Window wraps midnight (e.g. 23:00-04:00).
-			if minute >= start || minute <= end {
-				return true
-			}
+	} else {
+		if minute < start && minute > end {
+			return false
+		}
+		if minute <= end {
+			now = now.AddDate(0, 0, -1)
+		}
+	}
+	day := strings.ToLower(now.Format("Mon"))
+	for _, d := range strings.Split(daysCSV, ",") {
+		if strings.ToLower(strings.TrimSpace(d)) == day {
+			return true
 		}
 	}
 	return false

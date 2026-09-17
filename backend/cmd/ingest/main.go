@@ -2,12 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/webstats/backend/internal/config"
@@ -16,10 +10,18 @@ import (
 	"github.com/webstats/backend/internal/ingest"
 	"github.com/webstats/backend/internal/static"
 	"github.com/webstats/backend/internal/version"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.LoadChecked()
+	if err != nil {
+		log.Fatalf("configuration: %v", err)
+	}
 
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -28,15 +30,24 @@ func main() {
 	if err != nil {
 		log.Fatalf("db connect: %v", err)
 	}
-	defer pool.Close()
 
-	g, _ := geo.Load(cfg.GeoCSV)
+	g, err := geo.Load(cfg.GeoCSV)
+	if err != nil {
+		log.Fatalf("geo database: %v", err)
+	}
 	if g.Loaded() {
 		log.Printf("geo database loaded")
+	} else {
+		log.Printf("geo database disabled")
 	}
-	asn, _ := geo.LoadASN(cfg.ASNCSV)
+	asn, err := geo.LoadASN(cfg.ASNCSV)
+	if err != nil {
+		log.Fatalf("asn database: %v", err)
+	}
 	if asn.Loaded() {
 		log.Printf("asn database loaded")
+	} else {
+		log.Printf("asn database disabled")
 	}
 
 	buf := ingest.NewBuffer(cfg, pool, g, asn)
@@ -68,8 +79,8 @@ func main() {
 		return c.JSON(fiber.Map{"ok": true, "version": version.Version})
 	})
 
-	// On SIGINT/SIGTERM: stop accepting connections, then give the flusher a
-	// chance to drain the queue so buffered events are not lost.
+	// On SIGINT/SIGTERM: stop accepting connections and wait for in-flight
+	// requests. The queue drain happens below, after Listen returns.
 	go func() {
 		<-ctx.Done()
 		log.Printf("shutting down ingestion API…")
@@ -83,7 +94,14 @@ func main() {
 		log.Fatalf("listen: %v", err)
 	}
 
-	// Flush anything still buffered before exit (must not be deferred: it
-	// closes a channel and must run exactly once).
-	buf.Stop()
+	// Listen only returns after ShutdownWithContext above: in-flight requests
+	// are done and no new records arrive. Drain the buffer with a fresh
+	// bounded context (the signal context is already canceled), wait for the
+	// flusher, then close the pool.
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelDrain()
+	if err := buf.Shutdown(drainCtx); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
+	pool.Close()
 }

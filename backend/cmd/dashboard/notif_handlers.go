@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -23,6 +26,7 @@ var providerSecrets = map[string][]string{
 	"postmark": {"server_token"},
 	"brevo":    {"api_key"},
 	"smtp":     {"pass"},
+	"telegram": {"bot_token"},
 	"slack":    {"webhook_url"},
 	"discord":  {"webhook_url"},
 }
@@ -292,6 +296,72 @@ func listRulesHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func validateRuleParams(event string, params map[string]any) error {
+	for key, value := range params {
+		if key == "secret" {
+			if _, ok := value.(string); !ok {
+				return errors.New("secret must be a string")
+			}
+			continue
+		}
+		min, max := 1.0, 10080.0
+		switch key {
+		case "cooldown_min":
+		case "days":
+			max = 365
+		case "threshold":
+			max = 1000
+			if event == "vitals_lcp" {
+				max = 600000
+			}
+		default:
+			return fmt.Errorf("unknown rule parameter: %s", key)
+		}
+		n, ok := value.(float64)
+		if !ok || math.IsNaN(n) || math.IsInf(n, 0) || n < min || n > max || math.Trunc(n) != n {
+			return fmt.Errorf("%s must be an integer between %.0f and %.0f", key, min, max)
+		}
+	}
+	return nil
+}
+
+func emailProviderKind(kind string) bool {
+	switch kind {
+	case "smtp", "resend", "sendgrid", "mailgun", "postmark", "brevo":
+		return true
+	}
+	return false
+}
+
+func validateRuleDelivery(ctx context.Context, db *pgxpool.Pool, uid, channel, target, provider string) error {
+	if !validRuleChannel(channel) {
+		return errors.New("invalid channel")
+	}
+	if provider != "" {
+		var kind string
+		if err := db.QueryRow(ctx, `SELECT kind FROM notif_providers WHERE id = $1 AND user_id = $2`, provider, uid).Scan(&kind); err != nil {
+			return errors.New("provider not found")
+		}
+		if (channel == "email" && !emailProviderKind(kind)) || (channel != "email" && kind != channel) {
+			return errors.New("provider does not support channel")
+		}
+	}
+	if channel == "email" {
+		if provider == "" {
+			return errors.New("choose an email provider")
+		}
+		if _, err := mail.ParseAddress(target); err != nil {
+			return errors.New("recipient email required")
+		}
+		return nil
+	}
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		return errors.New("target must start with http(s)://")
+	}
+	_, err := validateMonitorURL(target)
+	return err
+}
+
 func createRuleHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var in struct {
@@ -339,6 +409,12 @@ func createRuleHandler(db *pgxpool.Pool) fiber.Handler {
 				return errJSON(c, 400, "webhook URL must start with http(s)://")
 			}
 		}
+		if err := validateRuleParams(in.Event, in.Params); err != nil {
+			return errJSON(c, 400, err.Error())
+		}
+		if err := validateRuleDelivery(c.Context(), db, uid, in.Channel, strings.TrimSpace(in.Target), in.ProviderID); err != nil {
+			return errJSON(c, 400, err.Error())
+		}
 		var owned bool
 		_ = db.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM sites WHERE id = $1 AND user_id = $2)`,
 			in.SiteID, uid).Scan(&owned)
@@ -372,13 +448,13 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		id := c.Params("id")
 		uid := auth.UserID(c)
-		var channel string
+		var channel, event, curTarget string
 		var curProvider *string
 		var curParams map[string]any
 		err := db.QueryRow(c.Context(), `
-			SELECT channel, provider_id::text, params
+			SELECT channel, provider_id::text, params, event, target
 			FROM notif_rules WHERE id = $1 AND user_id = $2`, id, uid).
-			Scan(&channel, &curProvider, &curParams)
+			Scan(&channel, &curProvider, &curParams, &event, &curTarget)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errJSON(c, 404, "rule not found")
 		}
@@ -431,6 +507,18 @@ func updateRuleHandler(db *pgxpool.Pool) fiber.Handler {
 			if !strings.HasPrefix(target, "https://") && !strings.HasPrefix(target, "http://") {
 				return errJSON(c, 400, "target must start with http(s)://")
 			}
+		}
+		if in.Event != nil {
+			event = *in.Event
+		}
+		if in.Target == nil {
+			target = curTarget
+		}
+		if err := validateRuleParams(event, params); err != nil {
+			return errJSON(c, 400, err.Error())
+		}
+		if err := validateRuleDelivery(c.Context(), db, uid, channel, target, orEmpty(provider)); err != nil {
+			return errJSON(c, 400, err.Error())
 		}
 		tag, err := db.Exec(c.Context(), `
 			UPDATE notif_rules SET
@@ -499,6 +587,9 @@ func testRuleHandler(db *pgxpool.Pool) fiber.Handler {
 func deliverRule(ctx context.Context, db *pgxpool.Pool, uid, channel, target string,
 	providerID *string, params map[string]any, payload notify.AlertPayload, isTest bool) (string, error) {
 
+	if err := validateRuleDelivery(ctx, db, uid, channel, target, orEmpty(providerID)); err != nil {
+		return "invalid delivery configuration", err
+	}
 	status, detail := "ok", ""
 	switch channel {
 	case "webhook":
@@ -513,7 +604,7 @@ func deliverRule(ctx context.Context, db *pgxpool.Pool, uid, channel, target str
 	case "slack", "discord":
 		// Chat hooks reuse the Sender abstraction with the rule target as
 		// the incoming webhook URL and the shared alert templates as text.
-		sender, err := notify.NewSender(channel, map[string]any{"webhook_url": target}, "")
+		sender, err := notify.NewSenderFor(channel, map[string]any{"webhook_url": target}, "", notify.CapabilityChat)
 		if err != nil {
 			status, detail = "fail", err.Error()
 		} else if err := sender.Send(ctx, notify.Message{
@@ -530,12 +621,12 @@ func deliverRule(ctx context.Context, db *pgxpool.Pool, uid, channel, target str
 			var cfg map[string]any
 			var fromEmail string
 			err := db.QueryRow(ctx, `
-				SELECT kind, config, from_email FROM notif_providers WHERE id = $1`, *providerID).
+				SELECT kind, config, from_email FROM notif_providers WHERE id = $1 AND user_id = $2`, *providerID, uid).
 				Scan(&kind, &cfg, &fromEmail)
 			if err != nil {
 				status, detail = "fail", "provider not found"
 			} else {
-				sender, err := notify.NewSender(kind, cfg, fromEmail)
+				sender, err := notify.NewSenderFor(kind, cfg, fromEmail, notify.CapabilityEmail)
 				if err != nil {
 					status, detail = "fail", err.Error()
 				} else if err := sender.Send(ctx, notify.Message{
@@ -556,9 +647,11 @@ func deliverRule(ctx context.Context, db *pgxpool.Pool, uid, channel, target str
 			detail = "test fail: " + detail
 		}
 	}
-	_, _ = db.Exec(ctx, `
+	if _, err := db.Exec(ctx, `
 		INSERT INTO notif_logs (user_id, site_id, event, channel, status, detail)
-		VALUES ($1,$2,$3,$4,$5,$6)`, uid, payload.SiteID, payload.Event, channel, status, detail)
+		VALUES ($1,NULLIF($2, '')::uuid,$3,$4,$5,$6)`, uid, payload.SiteID, payload.Event, channel, status, detail); err != nil {
+		return "delivery log failed", err
+	}
 	if status == "fail" {
 		return detail, errors.New(detail)
 	}

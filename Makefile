@@ -9,7 +9,7 @@ db-down:
 	docker compose down
 
 db-up-queue:
-	docker compose --profile queue up -d
+	REDIS_URL=redis://redis:6379 docker compose --profile queue up -d
 
 migrate:
 	./db/migrate.sh

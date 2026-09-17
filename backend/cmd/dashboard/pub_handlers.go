@@ -233,15 +233,15 @@ func publicInsightsHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 404, "dashboard not found")
 		}
 		period := c.Query("period", "7d")
-		ts, err := analytics.Q.Timeseries(c.Context(), db, owner, siteID, period, "", "", analytics.Filters{})
+		ts, err := analytics.Q.Timeseries(c.Context(), db, owner, siteID, period, c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
-		top, err := analytics.Q.Top(c.Context(), db, owner, siteID, period, "path", 5, "", "", analytics.Filters{})
+		top, err := analytics.Q.Top(c.Context(), db, owner, siteID, period, "path", 5, c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
-		src, err := analytics.Q.Top(c.Context(), db, owner, siteID, period, "referrer", 5, "", "", analytics.Filters{})
+		src, err := analytics.Q.Top(c.Context(), db, owner, siteID, period, "referrer", 5, c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
@@ -293,6 +293,7 @@ func publicStatusHandler(db *pgxpool.Pool) fiber.Handler {
 				&m.LastStatus, &m.LastOK, &m.LastCheckAt, &m.UptimePct); err != nil {
 				return errJSON(c, 500, "scan failed")
 			}
+			m.URL = publicMonitorURL(m.URL)
 			out = append(out, m)
 			ids = append(ids, m.ID)
 		}

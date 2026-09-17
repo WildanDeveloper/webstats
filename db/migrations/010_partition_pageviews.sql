@@ -13,6 +13,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_notif_reports_unsub ON notif_reports (unsu
 -- an already-partitioned table would otherwise needlessly rebuild it (and
 -- duplicate data). The DO block makes the conversion idempotent.
 DO $$
+DECLARE
+  month_start TIMESTAMPTZ;
 BEGIN
   IF NOT EXISTS (
     SELECT 1
@@ -57,6 +59,18 @@ BEGIN
     -- Safety net: rows whose month partition does not exist (yet) still land here.
     CREATE TABLE pageviews_default PARTITION OF pageviews DEFAULT;
 
+    FOR month_start IN
+      SELECT (date_trunc('month', now() AT TIME ZONE 'UTC') + n * INTERVAL '1 month') AT TIME ZONE 'UTC'
+      FROM generate_series(0, 1) n
+    LOOP
+      EXECUTE format(
+        'CREATE TABLE %I PARTITION OF pageviews FOR VALUES FROM (%L) TO (%L)',
+        'pageviews_' || to_char(month_start AT TIME ZONE 'UTC', 'YYYY_MM'),
+        month_start,
+        ((month_start AT TIME ZONE 'UTC') + INTERVAL '1 month') AT TIME ZONE 'UTC'
+      );
+    END LOOP;
+
     INSERT INTO pageviews (
         id, site_id, session_id, path, title, referrer, referrer_host,
         ua, browser, os, device, country, screen, lang, ip_hash, ip,
@@ -69,6 +83,9 @@ BEGIN
         isp, region, city, lat, lon, visited_at,
         utm_source, utm_medium, utm_campaign, utm_content, utm_term
     FROM pageviews_old;
+    PERFORM setval(pg_get_serial_sequence('pageviews', 'id'),
+                   GREATEST(COALESCE(MAX(id), 1), 1), COALESCE(MAX(id) >= 1, false))
+    FROM pageviews;
     DROP TABLE pageviews_old;
   END IF;
 END $$;

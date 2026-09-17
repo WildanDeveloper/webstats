@@ -5,12 +5,14 @@ Wants=postgresql.service
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/root/webstats/backend
+User=webstats
+Group=webstats
+NoNewPrivileges=true
+WorkingDirectory=/opt/webstats/backend
 EnvironmentFile=/etc/webstats.env
 Environment=PORT=8086
 Environment=BIND=127.0.0.1
-ExecStart=/root/webstats/backend/bin/dashboard
+ExecStart=/opt/webstats/backend/bin/dashboard
 Restart=always
 RestartSec=3
 

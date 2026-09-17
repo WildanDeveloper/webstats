@@ -69,10 +69,20 @@ func listFunnelsHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func siteWriteByUser(c *fiber.Ctx, db *pgxpool.Pool, siteID string) bool {
+	var ok bool
+	err := db.QueryRow(c.Context(), `
+		SELECT EXISTS(SELECT 1 FROM sites s
+		LEFT JOIN site_members m ON m.site_id = s.id AND m.user_id = $2
+		WHERE s.id = $1 AND (s.user_id = $2 OR m.role = 'editor'))`,
+		siteID, auth.UserID(c)).Scan(&ok)
+	return err == nil && ok
+}
+
 func replaceFunnelHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		siteID := c.Params("id")
-		if !siteAccessByUser(c, db, siteID) {
+		if !siteWriteByUser(c, db, siteID) {
 			return errJSON(c, 404, "site not found")
 		}
 		var in struct {

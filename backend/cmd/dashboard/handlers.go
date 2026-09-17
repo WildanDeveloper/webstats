@@ -2,11 +2,9 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -102,10 +100,13 @@ func loginHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 		if err != nil {
 			return errJSON(c, 500, "token issue failed")
 		}
-		_, _ = db.Exec(c.Context(), `
+		_, err = db.Exec(c.Context(), `
 			INSERT INTO sessions (user_id, token_hash, user_agent, ip, expires_at)
 			VALUES ($1,$2,$3,$4, now() + make_interval(secs => $5::int))`,
 			u.ID, m.HashToken(token), c.Get("User-Agent"), c.IP(), int(m.SessionTTL().Seconds()))
+		if err != nil {
+			return errJSON(c, 500, "session creation failed")
+		}
 		return c.JSON(fiber.Map{"token": token, "user": u})
 	}
 }
@@ -114,7 +115,9 @@ func logoutHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		tok := auth.BearerToken(c.Get("Authorization"))
 		if tok != "" {
-			_, _ = db.Exec(c.Context(), `DELETE FROM sessions WHERE token_hash = $1`, m.HashToken(tok))
+			if _, err := db.Exec(c.Context(), `DELETE FROM sessions WHERE token_hash = $1`, m.HashToken(tok)); err != nil {
+				return errJSON(c, 500, "session revocation failed")
+			}
 		}
 		return c.JSON(fiber.Map{"ok": true})
 	}
@@ -229,7 +232,8 @@ func getSiteHandler(db *pgxpool.Pool) fiber.Handler {
 				SELECT status, latency_ms, checked_at FROM site_checks
 				WHERE site_id = s.id ORDER BY checked_at DESC LIMIT 1
 			) sc ON true
-			WHERE s.id = $1 AND s.user_id = $2`, c.Params("id"), auth.UserID(c)).
+			WHERE s.id = $1 AND (s.user_id = $2 OR EXISTS (
+				SELECT 1 FROM site_members WHERE site_id = s.id AND user_id = $2))`, c.Params("id"), auth.UserID(c)).
 			Scan(&s.ID, &s.UserID, &s.Name, &s.Domain, &s.SiteKey, &s.Color, &s.CreatedAt, &status, &latency, &checked)
 		if err != nil {
 			return errJSON(c, 404, "site not found")
@@ -258,13 +262,16 @@ func updateSiteHandler(db *pgxpool.Pool) fiber.Handler {
 			if !ok {
 				return nil
 			}
-			s, _ := v.(string)
+			s, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("%s must be a string", key)
+			}
 			s = strings.TrimSpace(s)
 			if !allowEmpty && s == "" {
-				return errJSON(c, 400, key+" cannot be empty")
+				return fmt.Errorf("%s cannot be empty", key)
 			}
 			if key == "color" && s != "" && !hexColor.MatchString(s) {
-				return errJSON(c, 400, "color must be a hex value like #ef4444")
+				return errors.New("color must be a hex value like #ef4444")
 			}
 			args = append(args, s)
 			sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
@@ -280,7 +287,7 @@ func updateSiteHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		for _, f := range fields {
 			if err := addStr(f.key, f.col, f.allowEmpty); err != nil {
-				return err
+				return errJSON(c, 400, err.Error())
 			}
 		}
 		if len(sets) == 0 {
@@ -352,13 +359,8 @@ func sslCheckHandler(db *pgxpool.Pool) fiber.Handler {
 		if i := strings.Index(host, "/"); i >= 0 {
 			host = host[:i]
 		}
-		if isBlockedIPHost(host) {
-			return errJSON(c, 400, "domain resolves to a private address")
-		}
-
 		res := fiber.Map{"url": "https://" + host}
-		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 6 * time.Second},
-			"tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
+		conn, err := dialSiteTLS(c.Context(), domain)
 		if err != nil {
 			res["valid"] = false
 			res["error"] = err.Error()
@@ -500,6 +502,19 @@ func vitalsHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func databaseAdminOnly(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var role string
+		if err := db.QueryRow(c.Context(), `SELECT role FROM users WHERE id = $1`, auth.UserID(c)).Scan(&role); err != nil {
+			return errJSON(c, 403, "admin access required")
+		}
+		if role != "admin" {
+			return errJSON(c, 403, "admin access required")
+		}
+		return c.Next()
+	}
+}
+
 func validRole(r string) bool { return r == "admin" || r == "user" }
 
 func listUsersHandler(db *pgxpool.Pool) fiber.Handler {
@@ -597,16 +612,19 @@ func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 			if !ok {
 				return nil
 			}
-			s, _ := v.(string)
+			s, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("%s must be a string", key)
+			}
 			s = strings.TrimSpace(s)
 			if key == "email" {
 				s = strings.ToLower(s)
 				if !strings.Contains(s, "@") {
-					return errJSON(c, 400, "invalid email")
+					return errors.New("invalid email")
 				}
 			}
 			if !allowEmpty && s == "" {
-				return errJSON(c, 400, key+" cannot be empty")
+				return fmt.Errorf("%s cannot be empty", key)
 			}
 			args = append(args, s)
 			sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
@@ -622,7 +640,7 @@ func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 		}
 		for _, f := range fields {
 			if err := addStr(f.key, f.col, f.allowEmpty); err != nil {
-				return err
+				return errJSON(c, 400, err.Error())
 			}
 		}
 		if pwVal, ok := body["password"]; ok {
@@ -641,7 +659,12 @@ func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 			return errJSON(c, 400, "nothing to update")
 		}
 		args = append(args, id)
-		tag, err := db.Exec(c.Context(),
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return errJSON(c, 500, "transaction failed")
+		}
+		defer tx.Rollback(c.Context())
+		tag, err := tx.Exec(c.Context(),
 			fmt.Sprintf(`UPDATE users SET %s WHERE id = $%d`, strings.Join(sets, ", "), len(args)),
 			args...)
 		if err != nil {
@@ -653,9 +676,15 @@ func updateUserHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 		if tag.RowsAffected() == 0 {
 			return errJSON(c, 404, "user not found")
 		}
-		// A password change revokes every existing session of that user.
-		if _, ok := body["password"]; ok {
-			_, _ = db.Exec(c.Context(), `DELETE FROM sessions WHERE user_id = $1`, id)
+		_, passwordChanged := body["password"]
+		_, roleChanged := body["role"]
+		if passwordChanged || roleChanged {
+			if _, err := tx.Exec(c.Context(), `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
+				return errJSON(c, 500, "session revocation failed")
+			}
+		}
+		if err := tx.Commit(c.Context()); err != nil {
+			return errJSON(c, 500, "commit failed")
 		}
 		return c.JSON(fiber.Map{"ok": true})
 	}

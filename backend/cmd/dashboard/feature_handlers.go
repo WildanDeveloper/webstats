@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -178,6 +180,25 @@ func listReportsHandler(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func validReportSchedule(frequency, day string, hour int) bool {
+	if hour < 0 || hour > 23 {
+		return false
+	}
+	switch frequency {
+	case "daily":
+		return true
+	case "weekly":
+		switch day {
+		case "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
+			return true
+		}
+	case "monthly":
+		n, err := strconv.Atoi(day)
+		return err == nil && n >= 1 && n <= 31
+	}
+	return false
+}
+
 func createReportHandler(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var in struct {
@@ -186,7 +207,7 @@ func createReportHandler(db *pgxpool.Pool) fiber.Handler {
 			Recipient  string `json:"recipient"`
 			Frequency  string `json:"frequency"`
 			Day        string `json:"day"`
-			Hour       int    `json:"hour"`
+			Hour       *int   `json:"hour"`
 			Enabled    *bool  `json:"enabled"`
 		}
 		if err := c.BodyParser(&in); err != nil {
@@ -199,8 +220,19 @@ func createReportHandler(db *pgxpool.Pool) fiber.Handler {
 		if in.Frequency != "daily" && in.Frequency != "weekly" && in.Frequency != "monthly" {
 			return errJSON(c, 400, "frequency must be daily, weekly or monthly")
 		}
-		if in.Hour < 0 || in.Hour > 23 {
-			in.Hour = 8
+		in.Day = strings.ToLower(strings.TrimSpace(in.Day))
+		if in.Day == "" {
+			in.Day = "monday"
+			if in.Frequency == "monthly" {
+				in.Day = "1"
+			}
+		}
+		hour := 8
+		if in.Hour != nil {
+			hour = *in.Hour
+		}
+		if !validReportSchedule(in.Frequency, in.Day, hour) {
+			return errJSON(c, 400, "invalid report schedule")
 		}
 		enabled := true
 		if in.Enabled != nil {
@@ -218,7 +250,7 @@ func createReportHandler(db *pgxpool.Pool) fiber.Handler {
 		err := db.QueryRow(c.Context(), `
 			INSERT INTO notif_reports (user_id, site_id, provider_id, recipient, frequency, day, hour, enabled)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-			uid, in.SiteID, in.ProviderID, in.Recipient, in.Frequency, in.Day, in.Hour, enabled).Scan(&id)
+			uid, in.SiteID, in.ProviderID, in.Recipient, in.Frequency, in.Day, hour, enabled).Scan(&id)
 		if err != nil {
 			return errJSON(c, 500, "insert failed")
 		}
@@ -249,6 +281,25 @@ func updateReportHandler(db *pgxpool.Pool) fiber.Handler {
 		if in.Hour != nil && (*in.Hour < 0 || *in.Hour > 23) {
 			return errJSON(c, 400, "hour must be 0-23")
 		}
+		var frequency, day string
+		var hour int
+		if err := db.QueryRow(c.Context(), `SELECT frequency, day, hour FROM notif_reports WHERE id = $1 AND user_id = $2`, id, uid).Scan(&frequency, &day, &hour); err != nil {
+			return errJSON(c, 404, "report not found")
+		}
+		if in.Frequency != nil {
+			frequency = *in.Frequency
+		}
+		if in.Day != nil {
+			day = strings.ToLower(strings.TrimSpace(*in.Day))
+		}
+		if in.Hour != nil {
+			hour = *in.Hour
+		}
+		day = strings.ToLower(strings.TrimSpace(day))
+		if !validReportSchedule(frequency, day, hour) {
+			return errJSON(c, 400, "invalid report schedule")
+		}
+		in.Frequency, in.Day, in.Hour = &frequency, &day, &hour
 		tag, err := db.Exec(c.Context(), `
 			UPDATE notif_reports SET
 				recipient = COALESCE(NULLIF($1, ''), recipient),
@@ -402,9 +453,11 @@ func unsubscribeHandler(db *pgxpool.Pool) fiber.Handler {
 }
 
 func logReport(ctx context.Context, pool *pgxpool.Pool, userID, siteID, event, channel, status, detail string) {
-	_, _ = pool.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		INSERT INTO notif_logs (user_id, site_id, event, channel, status, detail)
-		VALUES ($1,$2,$3,$4,$5,$6)`, userID, siteID, event, channel, status, detail)
+		VALUES ($1,NULLIF($2, '')::uuid,$3,$4,$5,$6)`, userID, siteID, event, channel, status, detail); err != nil {
+		log.Printf("notification log insert failed: %v", err)
+	}
 }
 
 func buildReport(ctx context.Context, pool *pgxpool.Pool, siteID, period, siteName, domain, kind string,
@@ -499,7 +552,7 @@ type reportBody struct {
 }
 
 func sendReportEmail(ctx context.Context, b reportBody) error {
-	sender, err := notify.NewSender(b.Kind, b.Cfg, b.From)
+	sender, err := notify.NewSenderFor(b.Kind, b.Cfg, b.From, notify.CapabilityEmail)
 	if err != nil {
 		return err
 	}

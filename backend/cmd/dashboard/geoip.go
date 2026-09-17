@@ -119,24 +119,25 @@ func enrichVisitorIP(ctx context.Context, db *pgxpool.Pool, ip, siteID string) i
 		return r
 	}
 	if cached, ok := geoCacheGet(ip); ok {
-		return cached
+		r = cached
+	} else {
+		u := "http://ip-api.com/json/" + url.PathEscape(ip) +
+			"?fields=status,country,countryCode,regionName,city,lat,lon,isp,org,as,timezone,query"
+		resp, err := geoHTTP.Get(u)
+		if err != nil {
+			return r
+		}
+		defer resp.Body.Close()
+		if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+			return r
+		}
+		success := r.Status == "success"
+		geoCachePut(ip, r, success)
 	}
-	u := "http://ip-api.com/json/" + url.PathEscape(ip) +
-		"?fields=status,country,countryCode,regionName,city,lat,lon,isp,org,as,timezone,query"
-	resp, err := geoHTTP.Get(u)
-	if err != nil {
+	if r.Status != "success" || r.Lat == 0 && r.Lon == 0 {
 		return r
 	}
-	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return r
-	}
-	success := r.Status == "success"
-	geoCachePut(ip, r, success)
-	if !success || r.Lat == 0 && r.Lon == 0 {
-		return r
-	}
-	_, err = db.Exec(ctx, `UPDATE pageviews
+	_, err := db.Exec(ctx, `UPDATE pageviews
 		SET isp = CASE WHEN isp = '' THEN $2 ELSE isp END,
 		    country = CASE WHEN country = '' THEN $7 ELSE country END,
 		    region = $3, city = $4, lat = $5, lon = $6

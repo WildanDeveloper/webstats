@@ -127,15 +127,37 @@ func sendInviteEmail(db *pgxpool.Pool, cfg *config.Config, ownerID, email, role,
 	var kind string
 	var providerCfg map[string]any
 	var fromEmail string
-	err := db.QueryRow(ctx, `
+	rows, err := db.Query(ctx, `
 		SELECT kind, config, from_email FROM notif_providers
-		WHERE user_id = $1 ORDER BY created_at LIMIT 1`, ownerID).
-		Scan(&kind, &providerCfg, &fromEmail)
+		WHERE user_id = $1 ORDER BY created_at`, ownerID)
 	if err != nil {
 		logReport(ctx, db, ownerID, "", "invite", "email", "fail", "no email provider configured")
 		return
 	}
-	sender, err := notify.NewSender(kind, providerCfg, fromEmail)
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		var pcfg map[string]any
+		var from string
+		if err := rows.Scan(&k, &pcfg, &from); err != nil {
+			break
+		}
+		if notify.CapabilityOf(k) != notify.CapabilityEmail {
+			continue
+		}
+		kind, providerCfg, fromEmail = k, pcfg, from
+		break
+	}
+	rows.Close()
+	if rows.Err() != nil {
+		logReport(ctx, db, ownerID, "", "invite", "email", "fail", "provider query failed")
+		return
+	}
+	if kind == "" {
+		logReport(ctx, db, ownerID, "", "invite", "email", "fail", "no email provider configured")
+		return
+	}
+	sender, err := notify.NewSenderFor(kind, providerCfg, fromEmail, notify.CapabilityEmail)
 	if err != nil {
 		logReport(ctx, db, ownerID, "", "invite", "email", "fail", err.Error())
 		return
@@ -312,10 +334,12 @@ func acceptInviteHandler(db *pgxpool.Pool, m *auth.Manager) fiber.Handler {
 			return errJSON(c, 500, "token issue failed")
 		}
 		// Register the session so the server-side validator accepts the token.
-		_, _ = db.Exec(c.Context(), `
+		if _, err := db.Exec(c.Context(), `
 			INSERT INTO sessions (user_id, token_hash, user_agent, ip, expires_at)
 			VALUES ($1,$2,$3,$4, now() + make_interval(secs => $5::int))`,
-			userID, m.HashToken(token), c.Get("User-Agent"), c.IP(), int(m.SessionTTL().Seconds()))
+			userID, m.HashToken(token), c.Get("User-Agent"), c.IP(), int(m.SessionTTL().Seconds())); err != nil {
+			return errJSON(c, 500, "session creation failed")
+		}
 		return c.JSON(fiber.Map{"token": token, "email": inv.Email})
 	}
 }

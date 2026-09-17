@@ -21,15 +21,15 @@ func insightsHandler(db *pgxpool.Pool) fiber.Handler {
 			return errJSON(c, 404, "site not found")
 		}
 		period := c.Query("period", "7d")
-		ts, err := analytics.Q.Timeseries(c.Context(), db, auth.UserID(c), siteID, period, "", "", analytics.Filters{})
+		ts, err := analytics.Q.Timeseries(c.Context(), db, auth.UserID(c), siteID, period, c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
-		top, err := analytics.Q.Top(c.Context(), db, auth.UserID(c), siteID, period, "path", 5, "", "", analytics.Filters{})
+		top, err := analytics.Q.Top(c.Context(), db, auth.UserID(c), siteID, period, "path", 5, c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
-		src, err := analytics.Q.Top(c.Context(), db, auth.UserID(c), siteID, period, "referrer", 5, "", "", analytics.Filters{})
+		src, err := analytics.Q.Top(c.Context(), db, auth.UserID(c), siteID, period, "referrer", 5, c.Query("from"), c.Query("to"), filtersFromQuery(c))
 		if err != nil {
 			return errJSON(c, 500, "query failed")
 		}
@@ -95,6 +95,14 @@ func anomalyLoop(ctx context.Context, db *pgxpool.Pool) {
 	}
 }
 
+func trafficAnomaly(cur, prev int64) bool {
+	if prev < 20 {
+		return false
+	}
+	pct := (float64(cur) - float64(prev)) / float64(prev) * 100
+	return pct >= 100 || pct <= -50
+}
+
 func runAnomalyCheck(ctx context.Context, db *pgxpool.Pool) {
 	type siteRow struct {
 		ID   string
@@ -125,7 +133,7 @@ func runAnomalyCheck(ctx context.Context, db *pgxpool.Pool) {
 			  AND visited_at < now() - interval '24 hours'`, s.ID).Scan(&prev); err != nil {
 			continue
 		}
-		if cur < 20 || prev < 20 {
+		if !trafficAnomaly(cur, prev) {
 			continue
 		}
 		pct := (float64(cur) - float64(prev)) / float64(prev) * 100

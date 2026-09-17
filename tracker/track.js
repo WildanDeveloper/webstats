@@ -29,16 +29,22 @@
   var OPTOUT = '_wst_optout';
   var QUEUE = '_wst_queue';
 
+  var session = null;
+  var SESSION_TIMEOUT = 30 * 60 * 1000;
+
   function getSessionId() {
+    var now = Date.now();
     try {
-      var id = localStorage.getItem(STORAGE);
-      if (id) return id;
-      id = randomId();
-      localStorage.setItem(STORAGE, id);
-      return id;
-    } catch (e) {
-      return randomId();
+      var stored = JSON.parse(localStorage.getItem(STORAGE));
+      if (stored && typeof stored.id === 'string' && typeof stored.last === 'number' &&
+          stored.last <= now && now - stored.last < SESSION_TIMEOUT) session = stored;
+    } catch (e) {}
+    if (!session || session.last > now || now - session.last >= SESSION_TIMEOUT) {
+      session = { id: randomId(), last: now };
     }
+    session.last = now;
+    try { localStorage.setItem(STORAGE, JSON.stringify(session)); } catch (e) {}
+    return session.id;
   }
 
   function randomId() {
@@ -59,22 +65,37 @@
     return false;
   }
 
+  var MAX_TRIES = 5;
+
+  function enqueue(payload) {
+    try {
+      var q = JSON.parse(localStorage.getItem(QUEUE) || '[]');
+      payload._tries = (payload._tries || 0) + 1;
+      if (payload._tries > MAX_TRIES) return;
+      q.push(payload);
+      localStorage.setItem(QUEUE, JSON.stringify(q.slice(-20)));
+    } catch (e) {}
+  }
+
   function send(payload) {
     if (optedOut()) return;
+    var url = payload.kind === 'event' ? eventUrl : collect;
     try {
-      var blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      var body = JSON.stringify(payload);
       if (navigator.sendBeacon) {
-        navigator.sendBeacon(collect, blob);
-        return;
+        var blob = new Blob([body], { type: 'application/json' });
+        if (navigator.sendBeacon(url, blob)) return;
       }
-      fetch(collect, { method: 'POST', body: blob, keepalive: true });
+      fetch(url, {
+        method: 'POST',
+        body: body,
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true
+      }).then(function (res) {
+        if (!res.ok) enqueue(payload);
+      }).catch(function () { enqueue(payload); });
     } catch (e) {
-      
-      try {
-        var q = JSON.parse(localStorage.getItem(QUEUE) || '[]');
-        q.push(payload);
-        localStorage.setItem(QUEUE, JSON.stringify(q.slice(-20)));
-      } catch (e2) {}
+      enqueue(payload);
     }
   }
 
@@ -106,7 +127,8 @@
       kind: 'pageview',
       site_id: SITE,
       session_id: getSessionId(),
-      path: location.pathname + location.search,
+      id: randomId(),
+      path: pagePath(),
       title: document.title || '',
       referrer: ref,
       screen: screen.width + 'x' + screen.height,
@@ -143,6 +165,10 @@
     return location.pathname + location.search + location.hash;
   }
 
+  function pagePath() {
+    return location.pathname + location.search + location.hash;
+  }
+
   function onRoute() {
     var p = routeKey();
     if (p === lastPath) return;
@@ -152,23 +178,18 @@
 
   function event(name, props) {
     if (!name || optedOut()) return;
-    try {
-      var body = {
-        kind: 'event',
-        site_id: SITE,
-        session_id: getSessionId(),
-        event_name: name,
-        props: props || {},
-        url: location.pathname + location.search,
-        ua: navigator.userAgent,
-        ts: Date.now()
-      };
-      fetch(eventUrl, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        keepalive: true
-      });
-    } catch (e) {}
+    var payload = {
+      kind: 'event',
+      site_id: SITE,
+      session_id: getSessionId(),
+      id: randomId(),
+      event_name: name,
+      props: props || {},
+      url: pagePath(),
+      ua: navigator.userAgent,
+      ts: Date.now()
+    };
+    send(payload);
   }
 
   if (auto) {
@@ -197,17 +218,22 @@
         var t = e.target;
         var a = t && t.closest ? t.closest('a[href]') : null;
         if (!a) return;
-        var href = a.getAttribute('href') || '';
-        if (href.indexOf('http') !== 0) return;
-        var clean = href.split('?')[0].split('#')[0];
+        var href = a.href;
+        if (!href) return;
+        var u;
+        try { u = new URL(href, location.href); } catch (err) { return; }
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
+        var clean = (u.pathname + u.search).split('?')[0].split('#')[0];
         if (wantDownload && DL_RE.test(clean)) { event('download', { url: href }); return; }
-        if (wantOutbound && a.hostname && a.hostname !== location.hostname) event('outbound', { url: href });
+        if (wantOutbound && u.hostname && u.hostname !== location.hostname) event('outbound', { url: href });
       }, true);
     }
 
     if (wantScroll) {
       var seen = {};
+      var seenRoute = '';
       window.addEventListener('scroll', function () {
+        if (seenRoute !== routeKey()) { seen = {}; seenRoute = routeKey(); }
         var d = document.documentElement;
         var max = d.scrollHeight - window.innerHeight;
         var pct = max <= 0 ? 100 : Math.round(((window.scrollY || d.scrollTop) / max) * 100);

@@ -133,7 +133,11 @@ export default function StatsView(props: {
   const [openEvent, setOpenEvent] = useState("");
   const [occurrences, setOccurrences] = useState<EventOccurrence[]>([]);
   const [evMsg, setEvMsg] = useState("");
-  const [funnel, setFunnel] = useState<FunnelStep[]>(props.funnelReport || []);
+  const funnel = props.funnelReport || [];
+
+  useEffect(() => {
+    setGoals(props.goals);
+  }, [props.goals]);
 
   async function pubGet<T>(path: string, qs = "") {
     if (isPublic) {
